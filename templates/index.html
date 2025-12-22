@@ -1,0 +1,296 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Zindaki TTS - Озвучка текста</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Inter', sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+            color: #333;
+        }
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            background: rgba(255, 255, 255, 0.95);
+            border-radius: 20px;
+            padding: 40px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.1);
+        }
+        h1 {
+            color: #2d3748;
+            margin-bottom: 10px;
+            text-align: center;
+        }
+        .subtitle {
+            color: #4a5568;
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        .form-group {
+            margin-bottom: 20px;
+        }
+        label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: 500;
+            color: #4a5568;
+        }
+        textarea {
+            width: 100%;
+            min-height: 120px;
+            padding: 15px;
+            border: 2px solid #e2e8f0;
+            border-radius: 10px;
+            font-family: 'Inter', sans-serif;
+            font-size: 16px;
+            resize: vertical;
+            transition: border-color 0.3s;
+        }
+        textarea:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+        .controls {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+            margin-bottom: 25px;
+        }
+        select, button {
+            padding: 12px 20px;
+            border: 2px solid #e2e8f0;
+            border-radius: 10px;
+            font-family: 'Inter', sans-serif;
+            font-size: 16px;
+            transition: all 0.3s;
+        }
+        select {
+            background: white;
+            cursor: pointer;
+        }
+        select:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+        button {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            cursor: pointer;
+            font-weight: 600;
+        }
+        button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 20px rgba(102, 126, 234, 0.3);
+        }
+        button:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+            transform: none;
+            box-shadow: none;
+        }
+        .status {
+            padding: 15px;
+            border-radius: 10px;
+            margin-bottom: 25px;
+            text-align: center;
+            font-weight: 500;
+            display: none;
+        }
+        .status.queued { background: #feebc8; color: #744210; }
+        .status.processing { background: #bee3f8; color: #234e52; }
+        .status.ready { background: #c6f6d5; color: #22543d; }
+        .status.error { background: #fed7d7; color: #742a2a; }
+        .audio-player {
+            width: 100%;
+            margin-top: 20px;
+            display: none;
+        }
+        .credits {
+            text-align: center;
+            margin-top: 30px;
+            color: #718096;
+            font-size: 14px;
+        }
+        .credits a {
+            color: #667eea;
+            text-decoration: none;
+        }
+        @media (max-width: 640px) {
+            .controls { grid-template-columns: 1fr; }
+            .container { padding: 25px; }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Zindaki TTS Сервис</h1>
+        <p class="subtitle">Озвучка текста на русском и английском языках с помощью нейросетей</p>
+        
+        <div class="form-group">
+            <label for="text">Введите текст для озвучки:</label>
+            <textarea id="text" placeholder="Например: Здравствуйте! Добро пожаловать в Zindaki Academy. Hello! Welcome to Zindaki Academy."></textarea>
+        </div>
+        
+        <div class="controls">
+            <div>
+                <label for="language">Язык:</label>
+                <select id="language">
+                    <option value="ru">Русский</option>
+                    <option value="en">Английский</option>
+                </select>
+            </div>
+            <div>
+                <label for="speaker">Голос:</label>
+                <select id="speaker">
+                    <option value="aidar">Айдар (мужской)</option>
+                    <option value="baya">Бая (женский)</option>
+                    <option value="kseniya">Ксения (женский)</option>
+                </select>
+            </div>
+        </div>
+        
+        <button id="generateBtn">Сгенерировать аудио</button>
+        
+        <div id="status" class="status"></div>
+        
+        <audio id="audioPlayer" class="audio-player" controls>
+            Ваш браузер не поддерживает воспроизведение аудио.
+        </audio>
+        
+        <div class="credits">
+            Сервис работает на базе <a href="https://github.com/snakers4/silero-models" target="_blank">Silero TTS</a><br>
+            <a href="https://zindaki-edu.ru" target="_blank">Zindaki Academy</a> © 2024
+        </div>
+    </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            const textInput = document.getElementById('text');
+            const languageSelect = document.getElementById('language');
+            const speakerSelect = document.getElementById('speaker');
+            const generateBtn = document.getElementById('generateBtn');
+            const statusDiv = document.getElementById('status');
+            const audioPlayer = document.getElementById('audioPlayer');
+            
+            // Обновляем список голосов при смене языка
+            languageSelect.addEventListener('change', async function() {
+                const lang = this.value;
+                try {
+                    const response = await fetch('/api/voices');
+                    const voices = await response.json();
+                    speakerSelect.innerHTML = '';
+                    
+                    voices[lang].forEach(voice => {
+                        const option = document.createElement('option');
+                        option.value = voice;
+                        option.textContent = voice;
+                        speakerSelect.appendChild(option);
+                    });
+                } catch (error) {
+                    console.error('Ошибка загрузки голосов:', error);
+                }
+            });
+            
+            // Инициализация голосов для русского языка
+            languageSelect.dispatchEvent(new Event('change'));
+            
+            // Обработчик кнопки генерации
+            generateBtn.addEventListener('click', async function() {
+                const text = textInput.value.trim();
+                if (!text) {
+                    showStatus('Введите текст для озвучки', 'error');
+                    return;
+                }
+                
+                showStatus('Запрос отправляется...', 'queued');
+                generateBtn.disabled = true;
+                
+                try {
+                    // 1. Отправляем запрос на генерацию
+                    const response = await fetch('/api/tts', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            text: text,
+                            language: languageSelect.value,
+                            speaker: speakerSelect.value,
+                            sample_rate: 48000
+                        })
+                    });
+                    
+                    const data = await response.json();
+                    
+                    if (!response.ok) {
+                        throw new Error(data.error || 'Ошибка сервера');
+                    }
+                    
+                    const jobId = data.job_id;
+                    showStatus('Задача в очереди. Обработка...', 'processing');
+                    
+                    // 2. Периодически проверяем статус задачи
+                    const checkInterval = setInterval(async () => {
+                        try {
+                            const statusResponse = await fetch(`/api/status/${jobId}`);
+                            
+                            if (statusResponse.status === 202) {
+                                // Задача еще не завершена
+                                return;
+                            }
+                            
+                            if (statusResponse.ok) {
+                                // Задача завершена успешно
+                                clearInterval(checkInterval);
+                                showStatus('Аудио готово!', 'ready');
+                                
+                                // Получаем аудиофайл как Blob
+                                const audioBlob = await statusResponse.blob();
+                                const audioUrl = URL.createObjectURL(audioBlob);
+                                
+                                // Воспроизводим
+                                audioPlayer.src = audioUrl;
+                                audioPlayer.style.display = 'block';
+                                audioPlayer.play();
+                                
+                                generateBtn.disabled = false;
+                            } else {
+                                // Ошибка
+                                clearInterval(checkInterval);
+                                const errorData = await statusResponse.json();
+                                throw new Error(errorData.error || 'Ошибка генерации');
+                            }
+                        } catch (error) {
+                            clearInterval(checkInterval);
+                            showStatus(`Ошибка: ${error.message}`, 'error');
+                            generateBtn.disabled = false;
+                        }
+                    }, 2000); // Проверяем каждые 2 секунды
+                    
+                } catch (error) {
+                    showStatus(`Ошибка: ${error.message}`, 'error');
+                    generateBtn.disabled = false;
+                }
+            });
+            
+            function showStatus(message, type) {
+                statusDiv.textContent = message;
+                statusDiv.className = `status ${type}`;
+                statusDiv.style.display = 'block';
+                
+                // Автоматически скрываем успешные статусы через 5 секунд
+                if (type === 'ready') {
+                    setTimeout(() => {
+                        statusDiv.style.display = 'none';
+                    }, 5000);
+                }
+            }
+        });
+    </script>
+</body>
+</html>
