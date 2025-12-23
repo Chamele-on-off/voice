@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-ZINDAKI TTS SERVICE - Минимальная рабочая версия
-Для старых версий Silero TTS
+ZINDAKI TTS SERVICE - Полная исправленная версия
+С шаблоном index.html и исправленной ошибкой 'list' object has no attribute 'unsqueeze'
 """
 
 import os
@@ -20,7 +20,6 @@ from rq import Queue
 from rq.job import Job
 import threading
 import atexit
-import traceback
 
 # ========== НАСТРОЙКА ОКРУЖЕНИЯ ==========
 os.environ['TORCH_HOME'] = '/app/cache'
@@ -30,7 +29,6 @@ os.environ['XDG_CACHE_HOME'] = '/app/cache'
 # Создаем необходимые директории
 os.makedirs('/app/cache/torch/hub', exist_ok=True)
 os.makedirs('/app/temp_audio', exist_ok=True)
-os.makedirs('/app/templates', exist_ok=True)
 
 # ========== ИНИЦИАЛИЗАЦИЯ REDIS ==========
 redis_conn = redis.Redis(
@@ -50,18 +48,23 @@ app = Flask(__name__, template_folder='templates')
 CORS(app, resources={r"/*": {"origins": "*"}})
 
 # ========== ГЛОБАЛЬНЫЕ ПЕРЕМЕННЫЕ ==========
-tts_model = None  # Храним одну модель
-tts_example_text = ""
+tts_models = {}
 startup_time = datetime.now()
-model_loaded = False
 
-# ========== КОНФИГУРАЦИЯ SILERO TTS ==========
-# Простейшая конфигурация для старых версий
-SILERO_CONFIG = {
+# ========== КОРРЕКТНЫЕ ИМЕНА ДИКТОРОВ SILERO ==========
+# Используем правильные имена из доступных списков
+SPEAKER_MAPPING = {
     'ru': {
-        'speakers': ['aidar', 'baya', 'kseniya', 'irina', 'natasha', 'ruslan'],
-        'sample_rate': 16000,  # Старые версии используют 16kHz
-        'model_name': 'v3_ru'  # Пробуем старую версию
+        'baya': 'baya_16khz',      # Русский женский голос
+        'kseniya': 'kseniya_16khz', # Русский женский голос
+        'aidar': 'aidar_16khz',     # Русский мужской голос
+        'irina': 'irina_16khz',     # Русский женский голос
+        'natasha': 'natasha_16khz', # Русский женский голос
+        'ruslan': 'ruslan_16khz',   # Русский мужской голос
+    },
+    'en': {
+        'en_1': 'lj_16khz',         # Английский женский голос
+        'en_3': 'lj_16khz',         # Английский женский голос (тот же)
     }
 }
 
@@ -71,126 +74,163 @@ class TTSRequest(BaseModel):
     text: str
     language: str = 'ru'
     speaker: str = 'baya'
-    sample_rate: int = 16000  # 16kHz для старых версий
+    sample_rate: int = 16000
     
     class Config:
         extra = 'forbid'
 
 # ========== ФУНКЦИЯ ЗАГРУЗКИ МОДЕЛИ ==========
-def load_tts_model():
-    """Загружает модель Silero TTS (минимальная версия для старых API)"""
-    global tts_model, tts_example_text, model_loaded
+def load_tts_model(language='ru', user_speaker='baya'):
+    """
+    Загружает модель Silero TTS по требованию
+    Возвращает кортеж из 5 элементов:
+    (model, symbols, sample_rate, example_text, apply_tts)
+    """
+    # Формируем ключ для кэша
+    model_key = f"{language}_{user_speaker}"
     
-    if tts_model is None:
-        print(f"📥 Загружаю модель Silero TTS...")
+    if model_key not in tts_models:
+        print(f"📥 Загружаю модель TTS: {language}/{user_speaker}")
+        
+        # Получаем правильное имя диктора
+        if language in SPEAKER_MAPPING and user_speaker in SPEAKER_MAPPING[language]:
+            correct_speaker = SPEAKER_MAPPING[language][user_speaker]
+        else:
+            # Значения по умолчанию
+            if language == 'ru':
+                correct_speaker = 'baya_16khz'
+            else:
+                correct_speaker = 'lj_16khz'
+        
+        print(f"   Использую правильное имя: {correct_speaker}")
+        
+        # Устанавливаем директорию кэша
+        torch.hub.set_dir('/app/cache/torch/hub')
         
         try:
-            # Устанавливаем директорию кэша
-            torch.hub.set_dir('/app/cache/torch/hub')
+            # Загружаем модель с force_reload=False для использования кэша
+            result = torch.hub.load(
+                repo_or_dir='snakers4/silero-models',
+                model='silero_tts',
+                language=language,
+                speaker=correct_speaker,
+                force_reload=False,
+                trust_repo=True,
+                verbose=False
+            )
             
-            # Пробуем разные версии моделей
-            model_versions = ['v3_ru', 'v3_1_ru', 'ru_v3', 'v4_ru']
+            print(f"✅ Модель загружена ({len(result)} элементов)")
             
-            for model_version in model_versions:
-                try:
-                    print(f"   Пробую версию: {model_version}")
-                    tts_model, tts_example_text = torch.hub.load(
-                        repo_or_dir='snakers4/silero-models',
-                        model='silero_tts',
-                        language='ru',
-                        speaker=model_version,
-                        force_reload=False,
-                        trust_repo=True,
-                        verbose=False
-                    )
-                    print(f"✅ Модель {model_version} успешно загружена")
-                    model_loaded = True
-                    break
-                except Exception as e:
-                    print(f"   ❌ {model_version} не сработала: {str(e)[:80]}")
-                    continue
+            # Сохраняем все компоненты
+            tts_models[model_key] = {
+                'model': result[0],          # Модель TTS
+                'symbols': result[1],        # Алфавит/символы
+                'sample_rate': result[2],    # Частота дискретизации
+                'example_text': result[3],   # Пример текста
+                'apply_tts': result[4],      # Функция генерации
+                'correct_speaker': correct_speaker,  # Правильное имя диктора
+                'device': torch.device('cpu'),       # Устройство
+                'loaded_at': datetime.now().isoformat()
+            }
             
-            if tts_model is None:
-                raise ValueError("Не удалось загрузить ни одну версию модели")
-                
-            # Тестируем простейший вызов
-            print(f"   🔍 Тестирую простейший вызов...")
-            try:
-                # Самая простая версия вызова
-                audio = tts_model.apply_tts(
-                    texts=["Тест"],
-                    speaker='baya',
-                    sample_rate=16000
-                )
-                print(f"   ✅ API работает с texts=[], speaker=, sample_rate=")
-            except Exception as e:
-                print(f"   ❌ Простейший вызов не работает: {e}")
-                raise
-                
+            # Перемещаем модель на CPU
+            tts_models[model_key]['model'].to(tts_models[model_key]['device'])
+            
+            print(f"   Sample rate: {result[2]} Hz")
+            print(f"   Пример текста: {result[3][:50]}...")
+            
         except Exception as e:
-            print(f"❌ Ошибка загрузки модели: {str(e)}")
-            traceback.print_exc()
+            print(f"❌ Ошибка загрузки модели: {e}")
             raise
     
-    return tts_model, tts_example_text
+    return tts_models[model_key]
 
 # ========== ФУНКЦИЯ ГЕНЕРАЦИИ АУДИО ==========
 def generate_audio(text, language, speaker, sample_rate):
-    """Генерация аудио из текста (минимальная версия для старых API)"""
+    """
+    Генерация аудио из текста
+    ВАЖНО: функция apply_tts возвращает СПИСОК аудиофайлов!
+    """
     try:
         start_time = time.time()
         
         print(f"\n🎵 Начинаю генерацию аудио")
-        print(f"   Голос: {speaker}")
+        print(f"   Язык: {language}, Голос: {speaker}")
         print(f"   Текст: '{text[:100]}{'...' if len(text) > 100 else ''}'")
+        print(f"   Длина: {len(text)} символов")
         
-        # Загружаем модель
-        model, _ = load_tts_model()
+        # Загружаем или получаем модель из кэша
+        model_info = load_tts_model(language, speaker)
         
-        # Простейший вызов без лишних параметров
-        print(f"   ⚙️ Вызываю model.apply_tts()...")
+        # Получаем компоненты модели
+        model = model_info['model']
+        symbols = model_info['symbols']
+        target_sample_rate = model_info['sample_rate']
+        apply_tts_func = model_info['apply_tts']
+        device = model_info['device']
         
-        try:
-            # Вариант 1: Минимальный вызов
-            audio = model.apply_tts(
-                texts=[text],      # Всегда список
-                speaker=speaker,
-                sample_rate=16000  # Фиксированная частота
-            )
-            print(f"   ✅ Использован минимальный вызов")
-        except Exception as e1:
-            print(f"   ⚠️ Первый вариант не сработал: {e1}")
-            # Вариант 2: Без sample_rate
-            try:
-                audio = model.apply_tts(
-                    texts=[text],
-                    speaker=speaker
-                )
-                print(f"   ✅ Использован вызов без sample_rate")
-            except Exception as e2:
-                print(f"   ❌ Все варианты не сработали")
-                raise
+        print(f"   🔊 Использую голос: {model_info['correct_speaker']}")
+        print(f"   🎚️  Частота: {target_sample_rate} Hz")
         
-        # Извлекаем аудио если это список
-        if isinstance(audio, list) and len(audio) > 0:
-            audio = audio[0]
-            print(f"   📊 Извлечен аудио из списка")
+        # Генерация аудио
+        # ВАЖНО: apply_tts возвращает СПИСОК аудиофайлов для каждого текста!
+        audio_result = apply_tts_func(
+            texts=[text],           # Список текстов!
+            model=model,            # Модель TTS
+            sample_rate=target_sample_rate,  # Частота дискретизации
+            symbols=symbols,        # Алфавит/символы
+            device=device           # Устройство (CPU)
+        )
         
-        # Проверяем аудио
+        # ДИАГНОСТИКА: выводим тип результата
+        print(f"   📊 Тип результата apply_tts: {type(audio_result)}")
+        if isinstance(audio_result, list):
+            print(f"   📊 Длина списка: {len(audio_result)}")
+            if len(audio_result) > 0:
+                print(f"   📊 Тип первого элемента: {type(audio_result[0])}")
+                if hasattr(audio_result[0], 'shape'):
+                    print(f"   📊 Shape первого элемента: {audio_result[0].shape}")
+        
+        # ОБРАБОТКА РЕЗУЛЬТАТА
+        # 1. Если результат - список
+        if isinstance(audio_result, list):
+            if len(audio_result) == 0:
+                raise ValueError("apply_tts вернул пустой список")
+            
+            # Берем первый элемент списка
+            audio = audio_result[0]
+            print(f"   ✅ Использую первый элемент списка")
+            
+        # 2. Если результат не список
+        else:
+            audio = audio_result
+            print(f"   ✅ Результат не список, используем как есть")
+        
+        # ПРОВЕРЯЕМ И ПОДГОТАВЛИВАЕМ АУДИО ДЛЯ СОХРАНЕНИЯ
+        print(f"   🔧 Подготовка аудио для сохранения...")
+        
         if not hasattr(audio, 'shape'):
             raise ValueError(f"Аудио не имеет атрибута shape. Тип: {type(audio)}")
         
-        print(f"   📐 Shape аудио: {audio.shape}")
+        print(f"   📐 Исходный shape аудио: {audio.shape}")
         
-        # Приводим к правильной размерности
+        # Приводим к правильной размерности (каналы, время)
         if audio.ndim == 1:
+            # (время) -> (1, время) - один канал
+            print(f"   🔄 Преобразование: 1D -> 2D (добавляем канал)")
             audio = audio.unsqueeze(0) if hasattr(audio, 'unsqueeze') else audio.reshape(1, -1)
-        elif audio.ndim == 2 and audio.shape[0] > audio.shape[1]:
-            audio = audio.transpose(0, 1) if hasattr(audio, 'transpose') else audio.T
+        elif audio.ndim == 2:
+            if audio.shape[0] != 1:
+                # Возможно (время, каналы) -> (каналы, время)
+                print(f"   🔄 Проверяем ориентацию каналов...")
+                # Оставляем как есть, torchaudio разберется
+                pass
+        else:
+            raise ValueError(f"Неожиданная размерность аудио: {audio.ndim}")
         
-        print(f"   📐 Финальный shape: {audio.shape}")
+        print(f"   📐 Финальный shape аудио: {audio.shape}")
         
-        # Сохраняем в файл
+        # Создаем временный файл
         temp_dir = '/app/temp_audio'
         os.makedirs(temp_dir, exist_ok=True)
         
@@ -200,35 +240,30 @@ def generate_audio(text, language, speaker, sample_rate):
             dir=temp_dir
         )
         
+        # Сохраняем аудио в файл
         print(f"   💾 Сохраняю аудио в файл: {temp_file.name}")
         torchaudio.save(
             temp_file.name,
-            audio,
-            16000,  # Фиксированная частота
+            audio,                   # Уже правильной размерности
+            target_sample_rate,
             format='wav'
         )
         
-        # Проверяем файл
-        if not os.path.exists(temp_file.name):
-            raise ValueError(f"Файл не создан")
-        
-        file_size = os.path.getsize(temp_file.name)
-        if file_size == 0:
-            raise ValueError(f"Файл пустой")
-        
         # Вычисляем статистику
         generation_time = time.time() - start_time
-        audio_duration = audio.shape[-1] / 16000
+        audio_duration = audio.shape[-1] / target_sample_rate
         
         print(f"✅ Аудио успешно сгенерировано!")
-        print(f"   ⏱️ Время: {generation_time:.2f} сек")
-        print(f"   🕒 Длительность: {audio_duration:.2f} сек")
-        print(f"   📊 Размер: {file_size / 1024:.1f} KB")
+        print(f"   ⏱️  Время генерации: {generation_time:.2f} секунд")
+        print(f"   🕒 Длительность аудио: {audio_duration:.2f} секунд")
+        print(f"   📁 Файл: {temp_file.name}")
+        print(f"   📊 Размер: {os.path.getsize(temp_file.name) / 1024:.1f} KB")
         
         return temp_file.name
         
     except Exception as e:
         print(f"❌ Ошибка генерации аудио: {str(e)}")
+        import traceback
         traceback.print_exc()
         raise
 
@@ -236,22 +271,36 @@ def generate_audio(text, language, speaker, sample_rate):
 
 @app.route('/')
 def index():
-    """Главная страница"""
+    """Главная страница с веб-интерфейсом"""
     try:
         return render_template('index.html')
     except Exception as e:
+        # Если шаблон не найден, показываем JSON
+        print(f"⚠️ Шаблон index.html не найден: {e}")
         return jsonify({
             'service': 'Zindaki TTS Service',
-            'version': '5.0',
+            'version': '1.0',
             'status': 'running',
-            'model_loaded': model_loaded,
-            'timestamp': datetime.now().isoformat()
+            'endpoints': {
+                '/': 'GET - главная страница',
+                '/api/tts': 'POST - генерация аудио',
+                '/api/health': 'GET - проверка здоровья',
+                '/api/voices': 'GET - список голосов',
+                '/api/test': 'GET - тестовый запрос',
+                '/api/debug': 'GET - отладочная информация',
+                '/api/status/<job_id>': 'GET - статус задачи'
+            },
+            'note': 'Добавьте файл templates/index.html для веб-интерфейса'
         })
 
 @app.route('/api/tts', methods=['POST'])
 def tts_request():
-    """Основной endpoint для генерации TTS"""
+    """
+    Основной endpoint для генерации TTS
+    Принимает JSON: {"text": "текст", "language": "ru", "speaker": "baya"}
+    """
     try:
+        # Получаем и валидируем данные
         data = request.get_json()
         if not data:
             return jsonify({'error': 'No JSON data provided'}), 400
@@ -267,30 +316,26 @@ def tts_request():
                 'error': f'Text too long ({len(req.text)} chars). Max is 5000.'
             }), 400
         
-        # Проверяем голос
-        if req.speaker not in SILERO_CONFIG['ru']['speakers']:
-            return jsonify({
-                'error': f'Speaker {req.speaker} not supported. Available: {SILERO_CONFIG["ru"]["speakers"]}'
-            }), 400
-        
         print(f"\n📨 Получен TTS запрос:")
-        print(f"   🗣️ Голос: {req.speaker}")
+        print(f"   🌐 Язык: {req.language}")
+        print(f"   🗣️  Голос: {req.speaker}")
         print(f"   📝 Длина текста: {len(req.text)} символов")
         
         # Создаем фоновую задачу
         job = queue.enqueue(
-            generate_audio,
+            generate_audio,  # Используем основную функцию
             args=(req.text, req.language, req.speaker, req.sample_rate),
-            job_timeout=300,
-            result_ttl=3600,
-            failure_ttl=1800
+            job_timeout=300,    # 5 минут таймаут
+            result_ttl=3600,    # Результат хранится 1 час
+            failure_ttl=1800    # Информация о неудачных задачах 30 минут
         )
         
         return jsonify({
             'job_id': job.get_id(),
             'status': 'queued',
-            'message': 'Задача добавлена в очередь',
-            'model_loaded': model_loaded,
+            'message': 'Задача добавлена в очередь обработки',
+            'estimated_time': '5-30 секунд',
+            'models_loaded': list(tts_models.keys()),
             'timestamp': datetime.now().isoformat()
         }), 202
         
@@ -306,24 +351,17 @@ def tts_request():
 
 @app.route('/api/status/<job_id>', methods=['GET'])
 def get_job_status(job_id):
-    """Проверка статуса задачи"""
+    """Проверка статуса задачи и получение результата"""
     try:
-        print(f"📋 Проверка статуса задачи: {job_id}")
         job = Job.fetch(job_id, connection=redis_conn)
         
         if job.is_finished:
-            print(f"✅ Задача завершена: {job_id}")
             result = job.result
             
             if not result or not os.path.exists(result):
-                return jsonify({'error': 'Audio file not found'}), 500
+                return jsonify({'error': 'No audio file generated'}), 500
             
-            file_size = os.path.getsize(result)
-            if file_size == 0:
-                return jsonify({'error': 'Audio file is empty'}), 500
-            
-            print(f"📤 Отправляю аудио файл: {result} ({file_size} bytes)")
-            
+            # Отправляем аудио файл
             response = send_file(
                 result,
                 mimetype='audio/wav',
@@ -331,6 +369,7 @@ def get_job_status(job_id):
                 download_name=f'tts_{job_id}.wav'
             )
             
+            # Очистка файла после отправки
             @response.call_on_close
             def cleanup():
                 try:
@@ -344,7 +383,6 @@ def get_job_status(job_id):
             
         elif job.is_failed:
             error_msg = str(job.exc_info) if job.exc_info else 'Unknown error'
-            print(f"❌ Задача завершилась с ошибкой: {error_msg}")
             return jsonify({
                 'error': 'Job failed',
                 'details': error_msg,
@@ -352,10 +390,11 @@ def get_job_status(job_id):
             }), 500
             
         else:
-            status = job.get_status()
+            # Задача еще выполняется
             return jsonify({
-                'status': status,
-                'model_loaded': model_loaded,
+                'status': job.get_status(),
+                'position': job.get_position() if hasattr(job, 'get_position') else 'unknown',
+                'models_loaded': list(tts_models.keys()),
                 'timestamp': datetime.now().isoformat()
             }), 200
             
@@ -366,23 +405,27 @@ def get_job_status(job_id):
 def health_check():
     """Проверка здоровья сервиса"""
     try:
+        # Проверка Redis
         redis_conn.ping()
         
-        # Пробуем загрузить модель
-        if not model_loaded:
+        # Пробуем загрузить модель, если еще не загружена
+        if not tts_models:
             try:
-                load_tts_model()
+                load_tts_model('ru', 'baya')
             except Exception as e:
-                print(f"⚠️ Не удалось загрузить модель: {e}")
+                print(f"⚠️ Не удалось загрузить модель при health check: {e}")
         
         return jsonify({
             'status': 'healthy',
             'service': 'zindaki-tts-service',
-            'version': '5.0',
-            'model_loaded': model_loaded,
+            'redis': 'connected',
+            'models_loaded': list(tts_models.keys()),
+            'models_count': len(tts_models),
             'torch_version': torch.__version__,
+            'torch_available': torch.cuda.is_available(),
             'python_version': sys.version.split()[0],
             'uptime': str(datetime.now() - startup_time),
+            'cache_dir': os.environ.get('TORCH_HOME'),
             'timestamp': datetime.now().isoformat()
         }), 200
         
@@ -390,75 +433,171 @@ def health_check():
         return jsonify({
             'status': 'unhealthy',
             'error': str(e),
-            'model_loaded': model_loaded,
+            'models_loaded': list(tts_models.keys()),
             'timestamp': datetime.now().isoformat()
         }), 500
 
 @app.route('/api/voices', methods=['GET'])
 def get_available_voices():
-    """Список доступных голосов"""
-    voices = []
+    """Возвращает список доступных голосов"""
+    voices_info = {
+        'ru': [
+            {
+                'id': 'baya',
+                'name': 'Байя',
+                'actual': SPEAKER_MAPPING['ru'].get('baya', 'baya_16khz'),
+                'gender': 'female',
+                'sample_rate': 16000,
+                'description': 'Чистый женский голос'
+            },
+            {
+                'id': 'kseniya',
+                'name': 'Ксения',
+                'actual': SPEAKER_MAPPING['ru'].get('kseniya', 'kseniya_16khz'),
+                'gender': 'female',
+                'sample_rate': 16000,
+                'description': 'Мягкий женский голос'
+            },
+            {
+                'id': 'aidar',
+                'name': 'Айдар',
+                'actual': SPEAKER_MAPPING['ru'].get('aidar', 'aidar_16khz'),
+                'gender': 'male',
+                'sample_rate': 16000,
+                'description': 'Мужской голос'
+            }
+        ],
+        'en': [
+            {
+                'id': 'en_1',
+                'name': 'English Female',
+                'actual': SPEAKER_MAPPING['en'].get('en_1', 'lj_16khz'),
+                'gender': 'female',
+                'sample_rate': 16000,
+                'description': 'English female voice'
+            }
+        ]
+    }
     
-    for speaker in SILERO_CONFIG['ru']['speakers']:
-        voices.append({
-            'id': speaker,
-            'name': speaker.capitalize(),
-            'language': 'ru',
-            'sample_rate': 16000,
-            'loaded': model_loaded,
-            'status': '✅ Загружен' if model_loaded else '❌ Не загружен'
-        })
+    # Фильтруем только загруженные голоса
+    loaded_voices = {}
+    for lang in voices_info:
+        loaded_voices[lang] = [
+            voice for voice in voices_info[lang]
+            if f"{lang}_{voice['id']}" in tts_models
+        ]
     
     return jsonify({
-        'all_voices': {'ru': voices},
-        'model_loaded': model_loaded,
+        'all_voices': voices_info,
+        'loaded_voices': loaded_voices,
+        'total_loaded': len(tts_models),
+        'speaker_mapping': SPEAKER_MAPPING,
         'timestamp': datetime.now().isoformat()
     })
 
 @app.route('/api/test', methods=['GET'])
 def test_endpoint():
-    """Тестовый endpoint"""
+    """Тестовый endpoint для проверки работы сервиса"""
     try:
-        print(f"🧪 Выполняю тестовый запрос...")
+        # Загружаем тестовую модель
+        model_info = load_tts_model('ru', 'baya')
         
-        # Загружаем модель
-        model, example_text = load_tts_model()
+        # Тестовая генерация
+        test_text = "Привет! Это тестовое сообщение TTS сервиса."
         
-        test_text = "Привет! Тест."
-        print(f"   Текст: {test_text}")
+        print(f"🧪 Тестовый запрос: {test_text}")
         
-        # Минимальный тестовый вызов
-        audio = model.apply_tts(
+        # Генерация аудио
+        audio_result = model_info['apply_tts'](
             texts=[test_text],
-            speaker='baya',
-            sample_rate=16000
+            model=model_info['model'],
+            sample_rate=model_info['sample_rate'],
+            symbols=model_info['symbols'],
+            device=model_info['device']
         )
         
-        # Извлекаем аудио если нужно
-        if isinstance(audio, list) and len(audio) > 0:
-            audio = audio[0]
-        
-        audio_shape = str(audio.shape) if hasattr(audio, 'shape') else 'no shape'
-        
-        print(f"   ✅ Тест успешно завершен")
-        print(f"   Формат аудио: {audio_shape}")
+        # Обработка результата
+        if isinstance(audio_result, list):
+            audio = audio_result[0]
+            result_type = f"list[{len(audio_result)}]"
+        else:
+            audio = audio_result
+            result_type = str(type(audio_result))
         
         return jsonify({
             'success': True,
             'message': 'TTS сервис работает корректно',
-            'audio_shape': audio_shape,
-            'model_loaded': model_loaded,
+            'result_type': result_type,
+            'audio_shape': str(audio.shape) if hasattr(audio, 'shape') else 'no shape',
+            'sample_rate': model_info['sample_rate'],
+            'model_loaded': True,
+            'correct_speaker': model_info['correct_speaker'],
+            'models_in_cache': list(tts_models.keys()),
             'timestamp': datetime.now().isoformat()
         })
         
     except Exception as e:
+        import traceback
+        error_details = traceback.format_exc()
         print(f"❌ Тестовый запрос не удался: {e}")
+        print(f"Детали: {error_details}")
+        
         return jsonify({
             'success': False,
             'error': str(e),
-            'model_loaded': model_loaded,
+            'error_details': error_details[:500],
+            'models_in_cache': list(tts_models.keys()),
             'timestamp': datetime.now().isoformat()
         }), 500
+
+@app.route('/api/debug', methods=['GET'])
+def debug_info():
+    """Отладочная информация"""
+    # Проверяем наличие директории templates
+    templates_dir = '/app/templates'
+    template_files = []
+    if os.path.exists(templates_dir):
+        template_files = os.listdir(templates_dir)
+    
+    return jsonify({
+        'torch_version': torch.__version__,
+        'torchaudio_version': torchaudio.__version__,
+        'python_version': sys.version,
+        'environment': {k: v for k, v in os.environ.items() if 'TORCH' in k or 'CACHE' in k},
+        'cache_dir_contents': os.listdir('/app/cache') if os.path.exists('/app/cache') else [],
+        'templates_dir': templates_dir,
+        'template_files': template_files,
+        'models_loaded': list(tts_models.keys()),
+        'tts_models_structure': {k: list(v.keys()) for k, v in tts_models.items()} if tts_models else {},
+        'timestamp': datetime.now().isoformat()
+    })
+
+@app.route('/api/load-model/<language>/<speaker>', methods=['POST'])
+def load_model_endpoint(language, speaker):
+    """Принудительная загрузка конкретной модели"""
+    try:
+        model_key = f"{language}_{speaker}"
+        
+        if model_key in tts_models:
+            return jsonify({
+                'message': 'Model already loaded',
+                'model_key': model_key,
+                'loaded_at': tts_models[model_key]['loaded_at']
+            })
+        
+        model_info = load_tts_model(language, speaker)
+        
+        return jsonify({
+            'message': 'Model loaded successfully',
+            'model_key': model_key,
+            'correct_speaker': model_info['correct_speaker'],
+            'sample_rate': model_info['sample_rate'],
+            'example_text': model_info['example_text'][:100],
+            'timestamp': datetime.now().isoformat()
+        })
+        
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
 
 # ========== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ==========
 
@@ -468,77 +607,77 @@ def cleanup_temp_files():
     if os.path.exists(temp_dir):
         try:
             count = 0
-            current_time = time.time()
             for filename in os.listdir(temp_dir):
                 file_path = os.path.join(temp_dir, filename)
                 if os.path.isfile(file_path):
                     try:
-                        file_age = current_time - os.path.getmtime(file_path)
-                        if file_age > 3600:
-                            os.remove(file_path)
-                            count += 1
+                        os.remove(file_path)
+                        count += 1
                     except:
                         pass
             if count > 0:
-                print(f"🗑️ Удалено {count} старых временных файлов")
+                print(f"🗑️ Удалено {count} временных файлов")
         except Exception as e:
             print(f"⚠️ Ошибка очистки временных файлов: {e}")
 
 def periodic_cleanup():
-    """Периодическая очистка"""
+    """Периодическая очистка временных файлов"""
     while True:
-        time.sleep(3600)
+        time.sleep(3600)  # Каждый час
         cleanup_temp_files()
 
+# Регистрируем очистку при завершении
 atexit.register(cleanup_temp_files)
 
 # ========== ЗАПУСК СЕРВИСА ==========
 
 if __name__ == '__main__':
     print("\n" + "=" * 70)
-    print("🎵 ZINDAKI TTS SERVICE v5.0 - Минимальная версия")
+    print("🎵 ZINDAKI TTS SERVICE - Сервис озвучки для онлайн-школы")
     print("=" * 70)
     print(f"📅 Дата запуска: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"🐍 Python версия: {sys.version.split()[0]}")
     print(f"🔥 PyTorch версия: {torch.__version__}")
+    print(f"🎵 TorchAudio версия: {torchaudio.__version__}")
+    print(f"📁 Кэш директория: {os.environ.get('TORCH_HOME')}")
+    print(f"📁 Директория шаблонов: /app/templates")
     
-    # Запускаем очистку
+    # Проверяем наличие директории templates
+    templates_dir = '/app/templates'
+    if os.path.exists(templates_dir):
+        print(f"✅ Директория templates существует")
+        files = os.listdir(templates_dir)
+        print(f"   Файлы: {files}")
+    else:
+        print(f"⚠️ Директория templates не существует")
+        os.makedirs(templates_dir, exist_ok=True)
+        print(f"   Создана новая директория")
+    
+    print(f"🔗 Redis: {os.getenv('REDIS_HOST', 'tts-redis')}:{os.getenv('REDIS_PORT', 6379)}")
+    print("=" * 70)
+    
+    # Запускаем периодическую очистку в фоновом потоке
     cleanup_thread = threading.Thread(target=periodic_cleanup, daemon=True)
     cleanup_thread.start()
     
-    print("\n⏳ Пробую загрузить модель...")
+    # Предварительная загрузка основной модели
+    print("\n⏳ Предварительная загрузка основной модели...")
     try:
-        # Очищаем старый кэш
-        cache_path = '/app/cache/torch/hub/snakers4_silero-models_master'
-        if os.path.exists(cache_path):
-            print(f"🧹 Очищаю старый кэш модели...")
-            shutil.rmtree(cache_path)
-        
-        # Загружаем модель
-        load_tts_model()
-        print(f"✅ Модель загружена: {model_loaded}")
-        
-        # Тестируем
-        if model_loaded:
-            print(f"\n🧪 Тестирую генерацию...")
-            model, _ = load_tts_model()
-            audio = model.apply_tts(
-                texts=["Тест"],
-                speaker='baya',
-                sample_rate=16000
-            )
-            print(f"✅ Тестовая генерация успешна")
-            if isinstance(audio, list):
-                print(f"   Результат список из {len(audio)} элементов")
-            else:
-                print(f"   Тип результата: {type(audio)}")
-            
+        load_tts_model('ru', 'baya')
+        print(f"✅ Основная модель загружена: ru_baya")
+        print(f"   Используется голос: {tts_models['ru_baya']['correct_speaker']}")
+        print(f"   Частота дискретизации: {tts_models['ru_baya']['sample_rate']} Hz")
+        print(f"   Пример текста: {tts_models['ru_baya']['example_text'][:50]}...")
     except Exception as e:
         print(f"⚠️ Не удалось загрузить модель при старте: {e}")
+        import traceback
+        traceback.print_exc()
         print("   Модель будет загружена при первом запросе")
     
+    # Запуск сервера
     print("\n🚀 Запуск Flask сервера...")
     print(f"🌐 Доступен по адресу: http://0.0.0.0:5000")
+    print(f"📚 API доступен по: http://0.0.0.0:5000/api/health")
     print("=" * 70)
     
     app.run(
