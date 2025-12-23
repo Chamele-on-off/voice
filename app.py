@@ -229,7 +229,7 @@ def index():
 def tts_request():
     try:
         data = request.get_json()
-        if not 
+        if not data:
             return jsonify({'error': 'No JSON data provided'}), 400
         req = TTSRequest(**data)
 
