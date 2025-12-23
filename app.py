@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-ZINDAKI TTS SERVICE - Упрощенная версия без RQ
+ZINDAKI TTS SERVICE - Исправленная версия с работающим воркером
 """
 
 import os
@@ -19,7 +19,11 @@ import threading
 import atexit
 import uuid
 import queue as python_queue
-import concurrent.futures
+import logging
+
+# Настройка логирования
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
 
 # ========== НАСТРОЙКА ОКРУЖЕНИЯ ==========
 os.environ['TORCH_HOME'] = '/app/cache'
@@ -39,6 +43,7 @@ tts_models = {}
 startup_time = datetime.now()
 processing_queue = python_queue.Queue()
 results_cache = {}
+worker_running = True
 
 # ========== КОРРЕКТНЫЕ ИМЕНА ДИКТОРОВ SILERO ==========
 SPEAKER_MAPPING = {
@@ -78,7 +83,7 @@ def load_tts_model(language='ru', user_speaker='baya'):
     model_key = f"{language}_{user_speaker}"
     
     if model_key not in tts_models:
-        print(f"📥 Загружаю модель TTS: {language}/{user_speaker}")
+        logger.info(f"📥 Загружаю модель TTS: {language}/{user_speaker}")
         
         # Получаем правильное имя диктора
         if language in SPEAKER_MAPPING and user_speaker in SPEAKER_MAPPING[language]:
@@ -90,7 +95,7 @@ def load_tts_model(language='ru', user_speaker='baya'):
             else:
                 correct_speaker = 'lj_16khz'
         
-        print(f"   Использую правильное имя: {correct_speaker}")
+        logger.info(f"   Использую правильное имя: {correct_speaker}")
         
         # Устанавливаем директорию кэша
         torch.hub.set_dir('/app/cache/torch/hub')
@@ -107,7 +112,7 @@ def load_tts_model(language='ru', user_speaker='baya'):
                 verbose=False
             )
             
-            print(f"✅ Модель загружена ({len(result)} элементов)")
+            logger.info(f"✅ Модель загружена ({len(result)} элементов)")
             
             # Сохраняем все компоненты
             tts_models[model_key] = {
@@ -124,11 +129,11 @@ def load_tts_model(language='ru', user_speaker='baya'):
             # Перемещаем модель на CPU
             tts_models[model_key]['model'].to(tts_models[model_key]['device'])
             
-            print(f"   Sample rate: {result[2]} Hz")
-            print(f"   Пример текста: {result[3][:50]}...")
+            logger.info(f"   Sample rate: {result[2]} Hz")
+            logger.info(f"   Пример текста: {result[3][:50]}...")
             
         except Exception as e:
-            print(f"❌ Ошибка загрузки модели: {e}")
+            logger.error(f"❌ Ошибка загрузки модели: {e}")
             raise
     
     return tts_models[model_key]
@@ -142,10 +147,10 @@ def generate_audio(text, language, speaker, sample_rate):
     try:
         start_time = time.time()
         
-        print(f"\n🎵 Начинаю генерацию аудио")
-        print(f"   Язык: {language}, Голос: {speaker}")
-        print(f"   Текст: '{text[:100]}{'...' if len(text) > 100 else ''}'")
-        print(f"   Длина: {len(text)} символов")
+        logger.info(f"\n🎵 Начинаю генерацию аудио")
+        logger.info(f"   Язык: {language}, Голос: {speaker}")
+        logger.info(f"   Текст: '{text[:100]}{'...' if len(text) > 100 else ''}'")
+        logger.info(f"   Длина: {len(text)} символов")
         
         # Загружаем или получаем модель из кэша
         model_info = load_tts_model(language, speaker)
@@ -157,8 +162,8 @@ def generate_audio(text, language, speaker, sample_rate):
         apply_tts_func = model_info['apply_tts']
         device = model_info['device']
         
-        print(f"   🔊 Использую голос: {model_info['correct_speaker']}")
-        print(f"   🎚️  Частота: {target_sample_rate} Hz")
+        logger.info(f"   🔊 Использую голос: {model_info['correct_speaker']}")
+        logger.info(f"   🎚️  Частота: {target_sample_rate} Hz")
         
         # Генерация аудио
         audio_result = apply_tts_func(
@@ -177,28 +182,28 @@ def generate_audio(text, language, speaker, sample_rate):
             
             # Берем первый элемент списка
             audio = audio_result[0]
-            print(f"   ✅ Использую первый элемент списка")
+            logger.info(f"   ✅ Использую первый элемент списка")
             
         # 2. Если результат не список
         else:
             audio = audio_result
-            print(f"   ✅ Результат не список, используем как есть")
+            logger.info(f"   ✅ Результат не список, используем как есть")
         
         # ПРОВЕРЯЕМ И ПОДГОТАВЛИВАЕМ АУДИО ДЛЯ СОХРАНЕНИЯ
-        print(f"   🔧 Подготовка аудио для сохранения...")
+        logger.info(f"   🔧 Подготовка аудио для сохранения...")
         
         if not hasattr(audio, 'shape'):
             raise ValueError(f"Аудио не имеет атрибута shape. Тип: {type(audio)}")
         
-        print(f"   📐 Исходный shape аудио: {audio.shape}")
+        logger.info(f"   📐 Исходный shape аудио: {audio.shape}")
         
         # Приводим к правильной размерности (каналы, время)
         if audio.ndim == 1:
             # (время) -> (1, время) - один канал
-            print(f"   🔄 Преобразование: 1D -> 2D (добавляем канал)")
+            logger.info(f"   🔄 Преобразование: 1D -> 2D (добавляем канал)")
             audio = audio.unsqueeze(0) if hasattr(audio, 'unsqueeze') else audio.reshape(1, -1)
         
-        print(f"   📐 Финальный shape аудио: {audio.shape}")
+        logger.info(f"   📐 Финальный shape аудио: {audio.shape}")
         
         # Создаем уникальное имя файла
         temp_dir = '/app/temp_audio'
@@ -210,7 +215,7 @@ def generate_audio(text, language, speaker, sample_rate):
         filepath = os.path.join(temp_dir, filename)
         
         # Сохраняем аудио в файл
-        print(f"   💾 Сохраняю аудио в файл: {filepath}")
+        logger.info(f"   💾 Сохраняю аудио в файл: {filepath}")
         torchaudio.save(
             filepath,
             audio,
@@ -228,16 +233,16 @@ def generate_audio(text, language, speaker, sample_rate):
         generation_time = time.time() - start_time
         audio_duration = audio.shape[-1] / target_sample_rate
         
-        print(f"✅ Аудио успешно сгенерировано!")
-        print(f"   ⏱️  Время генерации: {generation_time:.2f} секунд")
-        print(f"   🕒 Длительность аудио: {audio_duration:.2f} секунд")
-        print(f"   📁 Файл: {filename}")
-        print(f"   📊 Размер: {file_size / 1024:.1f} KB")
+        logger.info(f"✅ Аудио успешно сгенерировано!")
+        logger.info(f"   ⏱️  Время генерации: {generation_time:.2f} секунд")
+        logger.info(f"   🕒 Длительность аудио: {audio_duration:.2f} секунд")
+        logger.info(f"   📁 Файл: {filename}")
+        logger.info(f"   📊 Размер: {file_size / 1024:.1f} KB")
         
         return filename
         
     except Exception as e:
-        print(f"❌ Ошибка генерации аудио: {str(e)}")
+        logger.error(f"❌ Ошибка генерации аудио: {str(e)}")
         import traceback
         traceback.print_exc()
         raise
@@ -245,15 +250,20 @@ def generate_audio(text, language, speaker, sample_rate):
 # ========== ФУНКЦИЯ ОБРАБОТКИ ЗАДАЧ В ФОНОВОМ ПОТОКЕ ==========
 def background_worker():
     """Фоновый воркер для обработки задач"""
-    print("🚀 Фоновый воркер запущен")
+    logger.info("🚀 Фоновый воркер запущен")
     
-    while True:
+    while worker_running:
         try:
-            # Получаем задачу из очереди
-            task_id, text, language, speaker, sample_rate = processing_queue.get(timeout=1)
+            # Получаем задачу из очереди (неблокирующий режим)
+            try:
+                task_id, text, language, speaker, sample_rate = processing_queue.get(timeout=1)
+            except python_queue.Empty:
+                # Очередь пуста, ждем
+                time.sleep(0.1)
+                continue
             
-            print(f"\n📋 Обрабатываю задачу {task_id}")
-            print(f"   Текст: '{text[:50]}...'")
+            logger.info(f"\n📋 Обрабатываю задачу {task_id}")
+            logger.info(f"   Текст: '{text[:50]}...'")
             
             try:
                 # Генерируем аудио
@@ -266,10 +276,10 @@ def background_worker():
                     'completed_at': datetime.now().isoformat()
                 }
                 
-                print(f"✅ Задача {task_id} выполнена, файл: {filename}")
+                logger.info(f"✅ Задача {task_id} выполнена, файл: {filename}")
                 
             except Exception as e:
-                print(f"❌ Ошибка выполнения задачи {task_id}: {e}")
+                logger.error(f"❌ Ошибка выполнения задачи {task_id}: {e}")
                 results_cache[task_id] = {
                     'status': 'failed',
                     'error': str(e),
@@ -279,12 +289,17 @@ def background_worker():
             # Помечаем задачу как выполненную
             processing_queue.task_done()
             
-        except python_queue.Empty:
-            # Очередь пуста, ждем
-            time.sleep(0.5)
         except Exception as e:
-            print(f"❌ Ошибка в фоновом воркере: {e}")
+            logger.error(f"❌ Ошибка в фоновом воркере: {e}")
             time.sleep(1)
+
+# ========== ЗАПУСК ФОНОВОГО ВОРКЕРА ==========
+def start_background_worker():
+    """Запускает фоновый воркер в отдельном потоке"""
+    worker_thread = threading.Thread(target=background_worker, daemon=True)
+    worker_thread.start()
+    logger.info("✅ Фоновый воркер запущен в отдельном потоке")
+    return worker_thread
 
 # ========== API МАРШРУТЫ ==========
 
@@ -294,23 +309,24 @@ def index():
     try:
         return render_template('index.html')
     except Exception as e:
-        print(f"⚠️ Шаблон index.html не найден: {e}")
+        logger.warning(f"⚠️ Шаблон index.html не найден: {e}")
         return jsonify({
             'service': 'Zindaki TTS Service',
-            'version': '2.0',
+            'version': '2.1',
             'status': 'running',
             'background_worker': 'active',
             'endpoints': {
                 '/': 'GET - главная страница',
-                '/api/tts': 'POST - генерация аудио',
-                '/api/tts-sync': 'POST - синхронная генерация',
+                '/api/tts': 'POST - генерация аудио (асинхронно)',
+                '/api/tts-sync': 'POST - генерация аудио (синхронно)',
                 '/api/health': 'GET - проверка здоровья',
                 '/api/voices': 'GET - список голосов',
                 '/api/test': 'GET - тестовый запрос',
                 '/api/test-generate': 'GET - тестовая генерация',
                 '/api/debug': 'GET - отладочная информация',
                 '/api/status/<task_id>': 'GET - статус задачи',
-                '/api/queue-status': 'GET - статус очереди'
+                '/api/queue-status': 'GET - статус очереди',
+                '/api/process-task/<task_id>': 'GET - обработать задачу вручную'
             },
             'note': 'Добавьте файл templates/index.html для веб-интерфейса'
         })
@@ -319,6 +335,7 @@ def index():
 def tts_request():
     """
     Асинхронная генерация TTS через фоновый воркер
+    ВАЖНО: Для совместимости с фронтендом возвращаем job_id вместо task_id
     """
     try:
         # Получаем и валидируем данные
@@ -340,10 +357,10 @@ def tts_request():
         # Генерируем уникальный ID задачи
         task_id = str(uuid.uuid4())
         
-        print(f"\n📨 Получен асинхронный TTS запрос (ID: {task_id})")
-        print(f"   🌐 Язык: {req.language}")
-        print(f"   🗣️  Голос: {req.speaker}")
-        print(f"   📝 Длина текста: {len(req.text)} символов")
+        logger.info(f"\n📨 Получен асинхронный TTS запрос (ID: {task_id})")
+        logger.info(f"   🌐 Язык: {req.language}")
+        logger.info(f"   🗣️  Голос: {req.speaker}")
+        logger.info(f"   📝 Длина текста: {len(req.text)} символов")
         
         # Добавляем задачу в очередь
         processing_queue.put((task_id, req.text, req.language, req.speaker, req.sample_rate))
@@ -355,8 +372,10 @@ def tts_request():
             'queue_position': processing_queue.qsize()
         }
         
+        # ВАЖНО: Для совместимости с фронтендом возвращаем job_id вместо task_id
         return jsonify({
-            'task_id': task_id,
+            'job_id': task_id,  # ← Фронтенд ожидает это поле
+            'task_id': task_id,  # ← Оставляем для обратной совместимости
             'status': 'queued',
             'message': 'Задача добавлена в очередь обработки',
             'estimated_time': '5-30 секунд',
@@ -373,7 +392,7 @@ def tts_request():
         }), 400
         
     except Exception as e:
-        print(f"❌ Ошибка в tts_request: {str(e)}")
+        logger.error(f"❌ Ошибка в tts_request: {str(e)}")
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/tts-sync', methods=['POST'])
@@ -398,8 +417,8 @@ def tts_sync_request():
                 'error': f'Text too long ({len(req.text)} chars). Max is 5000.'
             }), 400
         
-        print(f"\n⚡ Получен синхронный TTS запрос")
-        print(f"   Текст: '{req.text[:50]}...'")
+        logger.info(f"\n⚡ Получен синхронный TTS запрос")
+        logger.info(f"   Текст: '{req.text[:50]}...'")
         
         # Генерируем аудио синхронно
         filename = generate_audio(req.text, req.language, req.speaker, req.sample_rate)
@@ -408,7 +427,7 @@ def tts_sync_request():
         if not os.path.exists(filepath):
             return jsonify({'error': 'File was not created'}), 500
         
-        print(f"📤 Отправляю файл: {filename}")
+        logger.info(f"📤 Отправляю файл: {filename}")
         
         # Отправляем файл
         response = send_file(
@@ -424,9 +443,9 @@ def tts_sync_request():
             try:
                 if os.path.exists(filepath):
                     os.remove(filepath)
-                    print(f"🗑️ Удален временный файл: {filepath}")
+                    logger.info(f"🗑️ Удален временный файл: {filepath}")
             except Exception as e:
-                print(f"⚠️ Ошибка удаления файла: {e}")
+                logger.error(f"⚠️ Ошибка удаления файла: {e}")
         
         return response
         
@@ -437,7 +456,7 @@ def tts_sync_request():
         }), 400
         
     except Exception as e:
-        print(f"❌ Ошибка в tts_sync_request: {str(e)}")
+        logger.error(f"❌ Ошибка в tts_sync_request: {str(e)}")
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/status/<task_id>', methods=['GET'])
@@ -462,7 +481,7 @@ def get_task_status(task_id):
                     'filename': filename
                 }), 404
             
-            print(f"📤 Отправляю файл: {filepath}")
+            logger.info(f"📤 Отправляю файл: {filepath}")
             
             # Отправляем файл
             response = send_file(
@@ -478,12 +497,12 @@ def get_task_status(task_id):
                 try:
                     if os.path.exists(filepath):
                         os.remove(filepath)
-                        print(f"🗑️ Удален временный файл: {filepath}")
+                        logger.info(f"🗑️ Удален временный файл: {filepath}")
                     # Удаляем задачу из кэша
                     if task_id in results_cache:
                         del results_cache[task_id]
                 except Exception as e:
-                    print(f"⚠️ Ошибка удаления файла: {e}")
+                    logger.error(f"⚠️ Ошибка удаления файла: {e}")
             
             return response
             
@@ -506,9 +525,11 @@ def get_task_status(task_id):
                     queue_position = i + 1
                     break
             
+            # Для фронтенда возвращаем job_id тоже
             return jsonify({
                 'status': status,
-                'task_id': task_id,
+                'job_id': task_id,  # ← Для фронтенда
+                'task_id': task_id,  # ← Оригинальный ID
                 'queue_position': queue_position,
                 'queue_size': processing_queue.qsize(),
                 'queued_at': task_info.get('queued_at'),
@@ -517,8 +538,78 @@ def get_task_status(task_id):
             }), 200
             
     except Exception as e:
-        print(f"❌ Ошибка получения статуса задачи {task_id}: {str(e)}")
+        logger.error(f"❌ Ошибка получения статуса задачи {task_id}: {str(e)}")
         return jsonify({'error': f'Task error: {str(e)}'}), 500
+
+@app.route('/api/process-task/<task_id>', methods=['GET'])
+def process_task_manual(task_id):
+    """Обработать задачу вручную (для отладки)"""
+    try:
+        # Ищем задачу в очереди
+        task_found = False
+        task_data = None
+        
+        temp_queue = list(processing_queue.queue)
+        for tid, text, language, speaker, sample_rate in temp_queue:
+            if tid == task_id:
+                task_found = True
+                task_data = (text, language, speaker, sample_rate)
+                break
+        
+        if not task_found:
+            # Проверяем, может задача уже в кэше
+            if task_id in results_cache:
+                return jsonify({
+                    'message': 'Task already processed',
+                    'status': results_cache[task_id]['status'],
+                    'task_id': task_id
+                })
+            else:
+                return jsonify({'error': 'Task not found in queue'}), 404
+        
+        logger.info(f"🛠️  Ручная обработка задачи {task_id}")
+        
+        # Обрабатываем задачу вручную
+        text, language, speaker, sample_rate = task_data
+        
+        try:
+            filename = generate_audio(text, language, speaker, sample_rate)
+            
+            # Сохраняем результат
+            results_cache[task_id] = {
+                'status': 'completed',
+                'filename': filename,
+                'completed_at': datetime.now().isoformat()
+            }
+            
+            logger.info(f"✅ Задача {task_id} обработана вручную")
+            
+            # Удаляем задачу из очереди
+            # Создаем новую очередь без этой задачи
+            new_queue = python_queue.Queue()
+            for tid, t, l, s, sr in temp_queue:
+                if tid != task_id:
+                    new_queue.put((tid, t, l, s, sr))
+            
+            # Заменяем старую очередь
+            global processing_queue
+            processing_queue = new_queue
+            
+            return jsonify({
+                'message': 'Task processed manually',
+                'task_id': task_id,
+                'filename': filename,
+                'status': 'completed',
+                'queue_size': processing_queue.qsize()
+            })
+            
+        except Exception as e:
+            logger.error(f"❌ Ошибка ручной обработки: {e}")
+            return jsonify({'error': str(e)}), 500
+        
+    except Exception as e:
+        logger.error(f"❌ Ошибка ручной обработки задачи: {str(e)}")
+        return jsonify({'error': str(e)}), 500
 
 @app.route('/api/queue-status', methods=['GET'])
 def queue_status():
@@ -535,8 +626,8 @@ def queue_status():
             'speaker': speaker
         })
     
-    completed_tasks = {k: v for k, v in results_cache.items() if v['status'] == 'completed'}
-    failed_tasks = {k: v for k, v in results_cache.items() if v['status'] == 'failed'}
+    completed_tasks = {k: v for k, v in results_cache.items() if v.get('status') == 'completed'}
+    failed_tasks = {k: v for k, v in results_cache.items() if v.get('status') == 'failed'}
     
     return jsonify({
         'queue_size': queue_size,
@@ -557,7 +648,7 @@ def health_check():
             try:
                 load_tts_model('ru', 'baya')
             except Exception as e:
-                print(f"⚠️ Не удалось загрузить модель при health check: {e}")
+                logger.warning(f"⚠️ Не удалось загрузить модель при health check: {e}")
         
         # Проверяем директорию временных файлов
         temp_files_count = len(os.listdir('/app/temp_audio')) if os.path.exists('/app/temp_audio') else 0
@@ -568,7 +659,7 @@ def health_check():
         return jsonify({
             'status': 'healthy',
             'service': 'zindaki-tts-service',
-            'version': '2.0',
+            'version': '2.1',
             'background_worker': 'active',
             'queue_size': queue_size,
             'models_loaded': list(tts_models.keys()),
@@ -658,7 +749,7 @@ def test_endpoint():
         # Тестовая генерация
         test_text = "Привет! Это тестовое сообщение TTS сервиса."
         
-        print(f"🧪 Тестовый запрос: {test_text}")
+        logger.info(f"🧪 Тестовый запрос: {test_text}")
         
         # Генерация аудио
         audio_result = model_info['apply_tts'](
@@ -695,8 +786,8 @@ def test_endpoint():
     except Exception as e:
         import traceback
         error_details = traceback.format_exc()
-        print(f"❌ Тестовый запрос не удался: {e}")
-        print(f"Детали: {error_details}")
+        logger.error(f"❌ Тестовый запрос не удался: {e}")
+        logger.error(f"Детали: {error_details}")
         
         return jsonify({
             'success': False,
@@ -712,7 +803,7 @@ def test_generate():
     try:
         test_text = "Привет! Это тестовое сообщение TTS сервиса."
         
-        print(f"\n🧪 Тестовая генерация файла: {test_text}")
+        logger.info(f"\n🧪 Тестовая генерация файла: {test_text}")
         
         # Используем функцию generate_audio для теста
         filename = generate_audio(test_text, 'ru', 'baya', 16000)
@@ -748,7 +839,7 @@ def test_generate():
             
     except Exception as e:
         import traceback
-        print(f"❌ Тестовая генерация не удалась: {e}")
+        logger.error(f"❌ Тестовая генерация не удалась: {e}")
         
         return jsonify({
             'success': False,
@@ -772,6 +863,9 @@ def debug_info():
     if os.path.exists(temp_dir):
         temp_files = os.listdir(temp_dir)
     
+    # Получаем информацию о фоновом воркере
+    worker_info = "active"
+    
     return jsonify({
         'torch_version': torch.__version__,
         'torchaudio_version': torchaudio.__version__,
@@ -788,7 +882,8 @@ def debug_info():
         'tts_models_structure': {k: list(v.keys()) for k, v in tts_models.items()} if tts_models else {},
         'queue_size': processing_queue.qsize(),
         'results_cache_size': len(results_cache),
-        'background_worker': 'active',
+        'background_worker': worker_info,
+        'worker_running': worker_running,
         'timestamp': datetime.now().isoformat()
     })
 
@@ -836,9 +931,9 @@ def cleanup_temp_files():
                     except:
                         pass
             if count > 0:
-                print(f"🗑️ Удалено {count} временных файлов")
+                logger.info(f"🗑️ Удалено {count} временных файлов")
         except Exception as e:
-            print(f"⚠️ Ошибка очистки временных файлов: {e}")
+            logger.error(f"⚠️ Ошибка очистки временных файлов: {e}")
 
 def periodic_cleanup():
     """Периодическая очистка временных файлов и кэша"""
@@ -853,16 +948,21 @@ def periodic_cleanup():
         expired_tasks = []
         
         for task_id, task_info in list(results_cache.items()):
-            if task_info['status'] in ['completed', 'failed']:
-                completed_time = datetime.fromisoformat(task_info.get('completed_at') or task_info.get('failed_at') or '2000-01-01')
-                if (current_time - completed_time).total_seconds() > 3600:  # 1 час
-                    expired_tasks.append(task_id)
+            if task_info.get('status') in ['completed', 'failed']:
+                completed_time_str = task_info.get('completed_at') or task_info.get('failed_at')
+                if completed_time_str:
+                    try:
+                        completed_time = datetime.fromisoformat(completed_time_str)
+                        if (current_time - completed_time).total_seconds() > 3600:  # 1 час
+                            expired_tasks.append(task_id)
+                    except:
+                        pass
         
         for task_id in expired_tasks:
             del results_cache[task_id]
         
         if expired_tasks:
-            print(f"🗑️ Удалено {len(expired_tasks)} устаревших записей из кэша")
+            logger.info(f"🗑️ Удалено {len(expired_tasks)} устаревших записей из кэша")
 
 # Регистрируем очистку при завершении
 atexit.register(cleanup_temp_files)
@@ -871,12 +971,12 @@ atexit.register(cleanup_temp_files)
 
 if __name__ == '__main__':
     print("\n" + "=" * 70)
-    print("🎵 ZINDAKI TTS SERVICE - Упрощенная версия v2.0")
+    print("🎵 ZINDAKI TTS SERVICE - Исправленная версия v2.1")
     print("=" * 70)
     print(f"📅 Дата запуска: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"🐍 Python версия: {sys.version.split()[0]}")
-    print(f"🔥 PyTorch версия: torch.__version__")
-    print(f"🎵 TorchAudio версия: torchaudio.__version__")
+    print(f"🔥 PyTorch версия: {torch.__version__}")
+    print(f"🎵 TorchAudio версия: {torchaudio.__version__}")
     print(f"📁 Кэш директория: {os.environ.get('TORCH_HOME')}")
     print(f"📁 Директория временных файлов: /app/temp_audio")
     
@@ -896,10 +996,10 @@ if __name__ == '__main__':
     # Запускаем периодическую очистку в фоновом потоке
     cleanup_thread = threading.Thread(target=periodic_cleanup, daemon=True)
     cleanup_thread.start()
+    print("✅ Фоновый очиститель запущен")
     
     # Запускаем фоновый воркер для обработки задач
-    worker_thread = threading.Thread(target=background_worker, daemon=True)
-    worker_thread.start()
+    worker_thread = start_background_worker()
     
     # Предварительная загрузка основной модели
     print("\n⏳ Предварительная загрузка основной модели...")
@@ -920,10 +1020,11 @@ if __name__ == '__main__':
     print(f"🌐 Доступен по адресу: http://0.0.0.0:5000")
     print(f"📚 API доступен по: http://0.0.0.0:5000/api/health")
     print("\n📋 Доступные эндпоинты:")
-    print("   POST /api/tts       - Асинхронная генерация")
-    print("   POST /api/tts-sync  - Синхронная генерация (сразу файл)")
-    print("   GET  /api/status/*  - Статус задачи")
-    print("   GET  /api/queue-status - Статус очереди")
+    print("   POST /api/tts           - Асинхронная генерация")
+    print("   POST /api/tts-sync      - Синхронная генерация (сразу файл)")
+    print("   GET  /api/status/*      - Статус задачи")
+    print("   GET  /api/process-task/* - Ручная обработка задачи")
+    print("   GET  /api/queue-status  - Статус очереди")
     print("=" * 70)
     
     app.run(
