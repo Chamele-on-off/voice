@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-ZINDAKI TTS SERVICE - Версия с работающей очередью RQ
+ZINDAKI TTS SERVICE - Упрощенная версия без RQ
 """
 
 import os
@@ -15,14 +15,11 @@ from datetime import datetime
 from flask import Flask, request, jsonify, send_file, render_template
 from flask_cors import CORS
 from pydantic import BaseModel, ValidationError
-import redis
-from rq import Queue
-from rq.job import Job
 import threading
 import atexit
 import uuid
-import subprocess
-import multiprocessing
+import queue as python_queue
+import concurrent.futures
 
 # ========== НАСТРОЙКА ОКРУЖЕНИЯ ==========
 os.environ['TORCH_HOME'] = '/app/cache'
@@ -33,19 +30,6 @@ os.environ['XDG_CACHE_HOME'] = '/app/cache'
 os.makedirs('/app/cache/torch/hub', exist_ok=True)
 os.makedirs('/app/temp_audio', exist_ok=True)
 
-# ========== ИНИЦИАЛИЗАЦИЯ REDIS ==========
-redis_conn = redis.Redis(
-    host=os.getenv('REDIS_HOST', 'tts-redis'),
-    port=int(os.getenv('REDIS_PORT', 6379)),
-    db=0,
-    socket_connect_timeout=10,
-    socket_timeout=30,
-    retry_on_timeout=True
-)
-
-# Очередь задач
-queue = Queue(connection=redis_conn, default_timeout=600)
-
 # ========== НАСТРОЙКА FLASK ==========
 app = Flask(__name__, template_folder='templates')
 CORS(app, resources={r"/*": {"origins": "*"}})
@@ -53,6 +37,8 @@ CORS(app, resources={r"/*": {"origins": "*"}})
 # ========== ГЛОБАЛЬНЫЕ ПЕРЕМЕННЫЕ ==========
 tts_models = {}
 startup_time = datetime.now()
+processing_queue = python_queue.Queue()
+results_cache = {}
 
 # ========== КОРРЕКТНЫЕ ИМЕНА ДИКТОРОВ SILERO ==========
 SPEAKER_MAPPING = {
@@ -151,7 +137,7 @@ def load_tts_model(language='ru', user_speaker='baya'):
 def generate_audio(text, language, speaker, sample_rate):
     """
     Генерация аудио из текста
-    Возвращает только имя сгенерированного файла
+    Возвращает имя сгенерированного файла
     """
     try:
         start_time = time.time()
@@ -183,15 +169,6 @@ def generate_audio(text, language, speaker, sample_rate):
             device=device
         )
         
-        # ДИАГНОСТИКА: выводим тип результата
-        print(f"   📊 Тип результата apply_tts: {type(audio_result)}")
-        if isinstance(audio_result, list):
-            print(f"   📊 Длина списка: {len(audio_result)}")
-            if len(audio_result) > 0:
-                print(f"   📊 Тип первого элемента: {type(audio_result[0])}")
-                if hasattr(audio_result[0], 'shape'):
-                    print(f"   📊 Shape первого элемента: {audio_result[0].shape}")
-        
         # ОБРАБОТКА РЕЗУЛЬТАТА
         # 1. Если результат - список
         if isinstance(audio_result, list):
@@ -220,14 +197,6 @@ def generate_audio(text, language, speaker, sample_rate):
             # (время) -> (1, время) - один канал
             print(f"   🔄 Преобразование: 1D -> 2D (добавляем канал)")
             audio = audio.unsqueeze(0) if hasattr(audio, 'unsqueeze') else audio.reshape(1, -1)
-        elif audio.ndim == 2:
-            if audio.shape[0] != 1:
-                # Возможно (время, каналы) -> (каналы, время)
-                print(f"   🔄 Проверяем ориентацию каналов...")
-                # Оставляем как есть, torchaudio разберется
-                pass
-        else:
-            raise ValueError(f"Неожиданная размерность аудио: {audio.ndim}")
         
         print(f"   📐 Финальный shape аудио: {audio.shape}")
         
@@ -265,7 +234,6 @@ def generate_audio(text, language, speaker, sample_rate):
         print(f"   📁 Файл: {filename}")
         print(f"   📊 Размер: {file_size / 1024:.1f} KB")
         
-        # ВОЗВРАЩАЕМ ТОЛЬКО ИМЯ ФАЙЛА
         return filename
         
     except Exception as e:
@@ -274,78 +242,49 @@ def generate_audio(text, language, speaker, sample_rate):
         traceback.print_exc()
         raise
 
-# ========== ЗАПУСК ВОРКЕРА RQ В ФОНОВОМ ПРОЦЕССЕ ==========
-def start_rq_worker():
-    """Запускает воркер RQ в фоновом процессе"""
-    print("\n🔧 Запуск воркера RQ в фоновом режиме...")
+# ========== ФУНКЦИЯ ОБРАБОТКИ ЗАДАЧ В ФОНОВОМ ПОТОКЕ ==========
+def background_worker():
+    """Фоновый воркер для обработки задач"""
+    print("🚀 Фоновый воркер запущен")
     
-    # Создаем команду для запуска воркера
-    worker_command = [
-        'python', '-c',
-        '''
-import os
-os.environ["TORCH_HOME"] = "/app/cache"
-os.environ["HF_HOME"] = "/app/cache"
-import redis
-from rq import Worker, Queue, Connection
-import sys
-
-listen = ["default"]
-redis_url = "redis://tts-redis:6379/0"
-conn = redis.from_url(redis_url)
-
-if __name__ == "__main__":
-    with Connection(conn):
-        worker = Worker(list(map(Queue, listen)))
-        worker.work()
-        '''
-    ]
-    
-    try:
-        # Запускаем воркер в фоновом процессе
-        worker_process = subprocess.Popen(
-            worker_command,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True
-        )
-        
-        # Даем время на запуск
-        time.sleep(2)
-        
-        # Проверяем, запустился ли процесс
-        if worker_process.poll() is None:
-            print("✅ Воркер RQ успешно запущен")
+    while True:
+        try:
+            # Получаем задачу из очереди
+            task_id, text, language, speaker, sample_rate = processing_queue.get(timeout=1)
             
-            # Читаем вывод в фоновом потоке, чтобы не блокировать
-            def read_worker_output():
-                while True:
-                    output = worker_process.stdout.readline()
-                    if output:
-                        print(f"[RQ Worker] {output.strip()}")
-                    error = worker_process.stderr.readline()
-                    if error:
-                        print(f"[RQ Worker ERROR] {error.strip()}")
-                    if worker_process.poll() is not None:
-                        break
-                    time.sleep(0.1)
+            print(f"\n📋 Обрабатываю задачу {task_id}")
+            print(f"   Текст: '{text[:50]}...'")
             
-            output_thread = threading.Thread(target=read_worker_output, daemon=True)
-            output_thread.start()
+            try:
+                # Генерируем аудио
+                filename = generate_audio(text, language, speaker, sample_rate)
+                
+                # Сохраняем результат
+                results_cache[task_id] = {
+                    'status': 'completed',
+                    'filename': filename,
+                    'completed_at': datetime.now().isoformat()
+                }
+                
+                print(f"✅ Задача {task_id} выполнена, файл: {filename}")
+                
+            except Exception as e:
+                print(f"❌ Ошибка выполнения задачи {task_id}: {e}")
+                results_cache[task_id] = {
+                    'status': 'failed',
+                    'error': str(e),
+                    'failed_at': datetime.now().isoformat()
+                }
             
-            return worker_process
-        else:
-            print("⚠️ Воркер RQ завершился сразу после запуска")
-            stdout, stderr = worker_process.communicate()
-            print(f"STDOUT: {stdout}")
-            print(f"STDERR: {stderr}")
-            return None
+            # Помечаем задачу как выполненную
+            processing_queue.task_done()
             
-    except Exception as e:
-        print(f"❌ Ошибка запуска воркера RQ: {e}")
-        import traceback
-        traceback.print_exc()
-        return None
+        except python_queue.Empty:
+            # Очередь пуста, ждем
+            time.sleep(0.5)
+        except Exception as e:
+            print(f"❌ Ошибка в фоновом воркере: {e}")
+            time.sleep(1)
 
 # ========== API МАРШРУТЫ ==========
 
@@ -358,19 +297,20 @@ def index():
         print(f"⚠️ Шаблон index.html не найден: {e}")
         return jsonify({
             'service': 'Zindaki TTS Service',
-            'version': '1.2',
+            'version': '2.0',
             'status': 'running',
-            'rq_worker': 'active',
+            'background_worker': 'active',
             'endpoints': {
                 '/': 'GET - главная страница',
                 '/api/tts': 'POST - генерация аудио',
+                '/api/tts-sync': 'POST - синхронная генерация',
                 '/api/health': 'GET - проверка здоровья',
                 '/api/voices': 'GET - список голосов',
                 '/api/test': 'GET - тестовый запрос',
                 '/api/test-generate': 'GET - тестовая генерация',
                 '/api/debug': 'GET - отладочная информация',
-                '/api/status/<job_id>': 'GET - статус задачи',
-                '/api/process-queue': 'GET - обработать очередь вручную'
+                '/api/status/<task_id>': 'GET - статус задачи',
+                '/api/queue-status': 'GET - статус очереди'
             },
             'note': 'Добавьте файл templates/index.html для веб-интерфейса'
         })
@@ -378,8 +318,7 @@ def index():
 @app.route('/api/tts', methods=['POST'])
 def tts_request():
     """
-    Основной endpoint для генерации TTS
-    Принимает JSON: {"text": "текст", "language": "ru", "speaker": "baya"}
+    Асинхронная генерация TTS через фоновый воркер
     """
     try:
         # Получаем и валидируем данные
@@ -398,27 +337,31 @@ def tts_request():
                 'error': f'Text too long ({len(req.text)} chars). Max is 5000.'
             }), 400
         
-        print(f"\n📨 Получен TTS запрос:")
+        # Генерируем уникальный ID задачи
+        task_id = str(uuid.uuid4())
+        
+        print(f"\n📨 Получен асинхронный TTS запрос (ID: {task_id})")
         print(f"   🌐 Язык: {req.language}")
         print(f"   🗣️  Голос: {req.speaker}")
         print(f"   📝 Длина текста: {len(req.text)} символов")
         
-        # Создаем фоновую задачу
-        job = queue.enqueue(
-            generate_audio,  # Используем основную функцию
-            args=(req.text, req.language, req.speaker, req.sample_rate),
-            job_timeout=300,    # 5 минут таймаут
-            result_ttl=3600,    # Результат хранится 1 час
-            failure_ttl=1800    # Информация о неудачных задачах 30 минут
-        )
+        # Добавляем задачу в очередь
+        processing_queue.put((task_id, req.text, req.language, req.speaker, req.sample_rate))
+        
+        # Инициализируем статус задачи
+        results_cache[task_id] = {
+            'status': 'queued',
+            'queued_at': datetime.now().isoformat(),
+            'queue_position': processing_queue.qsize()
+        }
         
         return jsonify({
-            'job_id': job.get_id(),
+            'task_id': task_id,
             'status': 'queued',
             'message': 'Задача добавлена в очередь обработки',
             'estimated_time': '5-30 секунд',
-            'check_status': f'/api/status/{job.get_id()}',
-            'queue_position': len(queue),
+            'check_status': f'/api/status/{task_id}',
+            'queue_position': processing_queue.qsize(),
             'models_loaded': list(tts_models.keys()),
             'timestamp': datetime.now().isoformat()
         }), 202
@@ -433,158 +376,182 @@ def tts_request():
         print(f"❌ Ошибка в tts_request: {str(e)}")
         return jsonify({'error': str(e)}), 500
 
-@app.route('/api/status/<job_id>', methods=['GET'])
-def get_job_status(job_id):
-    """Проверка статуса задачи и получение результата"""
+@app.route('/api/tts-sync', methods=['POST'])
+def tts_sync_request():
+    """
+    Синхронная генерация TTS (сразу возвращает файл)
+    """
     try:
-        job = Job.fetch(job_id, connection=redis_conn)
+        # Получаем и валидируем данные
+        data = request.get_json()
+        if not data:
+            return jsonify({'error': 'No JSON data provided'}), 400
         
-        if job.is_finished:
-            # Результат задачи - только имя файла
-            filename = job.result
+        req = TTSRequest(**data)
+        
+        # Проверка длины текста
+        if len(req.text) == 0:
+            return jsonify({'error': 'Text cannot be empty'}), 400
+        
+        if len(req.text) > 5000:
+            return jsonify({
+                'error': f'Text too long ({len(req.text)} chars). Max is 5000.'
+            }), 400
+        
+        print(f"\n⚡ Получен синхронный TTS запрос")
+        print(f"   Текст: '{req.text[:50]}...'")
+        
+        # Генерируем аудио синхронно
+        filename = generate_audio(req.text, req.language, req.speaker, req.sample_rate)
+        filepath = os.path.join('/app/temp_audio', filename)
+        
+        if not os.path.exists(filepath):
+            return jsonify({'error': 'File was not created'}), 500
+        
+        print(f"📤 Отправляю файл: {filename}")
+        
+        # Отправляем файл
+        response = send_file(
+            filepath,
+            mimetype='audio/wav',
+            as_attachment=True,
+            download_name=filename
+        )
+        
+        # Очистка файла после отправки
+        @response.call_on_close
+        def cleanup():
+            try:
+                if os.path.exists(filepath):
+                    os.remove(filepath)
+                    print(f"🗑️ Удален временный файл: {filepath}")
+            except Exception as e:
+                print(f"⚠️ Ошибка удаления файла: {e}")
+        
+        return response
+        
+    except ValidationError as e:
+        return jsonify({
+            'error': 'Invalid request data',
+            'details': e.errors()
+        }), 400
+        
+    except Exception as e:
+        print(f"❌ Ошибка в tts_sync_request: {str(e)}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/status/<task_id>', methods=['GET'])
+def get_task_status(task_id):
+    """Проверка статуса задачи"""
+    try:
+        if task_id not in results_cache:
+            return jsonify({'error': 'Task not found'}), 404
+        
+        task_info = results_cache[task_id]
+        status = task_info['status']
+        
+        if status == 'completed':
+            # Задача выполнена
+            filename = task_info['filename']
+            filepath = os.path.join('/app/temp_audio', filename)
             
-            if not filename:
-                return jsonify({'error': 'No audio filename in job result'}), 500
-            
-            # Восстанавливаем полный путь
-            file_path = os.path.join('/app/temp_audio', filename)
-            
-            if not os.path.exists(file_path):
-                print(f"⚠️ Файл не найден: {file_path}")
-                print(f"   Доступные файлы в /app/temp_audio:")
-                try:
-                    files = os.listdir('/app/temp_audio')
-                    for f in files[:10]:
-                        print(f"     - {f}")
-                except Exception as e:
-                    print(f"   Ошибка чтения директории: {e}")
-                
+            if not os.path.exists(filepath):
                 return jsonify({
-                    'error': f'Audio file not found: {filename}',
-                    'available_files': os.listdir('/app/temp_audio')[:10] if os.path.exists('/app/temp_audio') else []
+                    'error': 'Audio file not found',
+                    'status': 'completed',
+                    'filename': filename
                 }), 404
             
-            print(f"📤 Отправляю файл: {file_path}")
-            print(f"   Размер файла: {os.path.getsize(file_path) / 1024:.1f} KB")
+            print(f"📤 Отправляю файл: {filepath}")
             
-            # Отправляем аудио файл
+            # Отправляем файл
             response = send_file(
-                file_path,
+                filepath,
                 mimetype='audio/wav',
                 as_attachment=True,
                 download_name=filename
             )
             
-            # Очистка файла после отправки
+            # Очистка файла после отправки и из кэша
             @response.call_on_close
             def cleanup():
                 try:
-                    if os.path.exists(file_path):
-                        os.remove(file_path)
-                        print(f"🗑️ Удален временный файл: {file_path}")
+                    if os.path.exists(filepath):
+                        os.remove(filepath)
+                        print(f"🗑️ Удален временный файл: {filepath}")
+                    # Удаляем задачу из кэша
+                    if task_id in results_cache:
+                        del results_cache[task_id]
                 except Exception as e:
                     print(f"⚠️ Ошибка удаления файла: {e}")
             
             return response
             
-        elif job.is_failed:
-            error_msg = str(job.exc_info) if job.exc_info else 'Unknown error'
-            print(f"❌ Задача {job_id} завершилась с ошибкой: {error_msg}")
-            
+        elif status == 'failed':
+            # Задача завершилась с ошибкой
             return jsonify({
-                'error': 'Job failed',
-                'details': error_msg,
-                'status': 'failed'
+                'status': 'failed',
+                'error': task_info.get('error', 'Unknown error'),
+                'failed_at': task_info.get('failed_at'),
+                'task_id': task_id
             }), 500
             
         else:
-            # Задача еще выполняется
-            status = job.get_status()
-            
-            # Получаем позицию в очереди
-            position = 0
-            try:
-                # Получаем все задачи в очереди
-                jobs = queue.get_jobs()
-                for i, job_in_queue in enumerate(jobs):
-                    if job_in_queue.id == job_id:
-                        position = i + 1
-                        break
-            except:
-                position = 'unknown'
-            
-            print(f"⏳ Задача {job_id} выполняется: статус={status}, позиция={position}")
+            # Задача в очереди или выполняется
+            queue_position = 0
+            # Подсчитываем позицию в очереди
+            temp_queue = list(processing_queue.queue)
+            for i, (tid, _, _, _, _) in enumerate(temp_queue):
+                if tid == task_id:
+                    queue_position = i + 1
+                    break
             
             return jsonify({
                 'status': status,
-                'job_id': job_id,
-                'position': position,
-                'queue_size': len(queue),
+                'task_id': task_id,
+                'queue_position': queue_position,
+                'queue_size': processing_queue.qsize(),
+                'queued_at': task_info.get('queued_at'),
                 'models_loaded': list(tts_models.keys()),
                 'timestamp': datetime.now().isoformat()
             }), 200
             
     except Exception as e:
-        print(f"❌ Ошибка получения статуса задачи {job_id}: {str(e)}")
-        return jsonify({'error': f'Job not found: {str(e)}'}), 404
+        print(f"❌ Ошибка получения статуса задачи {task_id}: {str(e)}")
+        return jsonify({'error': f'Task error: {str(e)}'}), 500
 
-@app.route('/api/process-queue', methods=['GET'])
-def process_queue():
-    """Обработать очередь задач вручную"""
-    try:
-        queue_size = len(queue)
-        print(f"\n⚙️ Обработка очереди вручную: {queue_size} задач в очереди")
-        
-        if queue_size == 0:
-            return jsonify({
-                'message': 'Queue is empty',
-                'queue_size': 0
-            })
-        
-        # Получаем все задачи
-        jobs = queue.get_jobs()
-        
-        # Обрабатываем каждую задачу
-        processed = 0
-        for job in jobs[:5]:  # Обрабатываем максимум 5 задач за раз
-            if job.get_status() == 'queued':
-                try:
-                    # Выполняем задачу напрямую
-                    print(f"   Обработка задачи {job.id}...")
-                    result = generate_audio(*job.args)
-                    
-                    # Сохраняем результат
-                    job._result = result
-                    job._status = 'finished'
-                    job.save()
-                    
-                    processed += 1
-                    print(f"   ✅ Задача {job.id} обработана")
-                    
-                except Exception as e:
-                    print(f"   ❌ Ошибка обработки задачи {job.id}: {e}")
-                    job._exc_info = str(e)
-                    job._status = 'failed'
-                    job.save()
-        
-        return jsonify({
-            'message': f'Processed {processed} tasks manually',
-            'queue_size': len(queue),
-            'processed': processed,
-            'timestamp': datetime.now().isoformat()
+@app.route('/api/queue-status', methods=['GET'])
+def queue_status():
+    """Статус очереди"""
+    queue_size = processing_queue.qsize()
+    pending_tasks = list(processing_queue.queue)[:10]  # Первые 10 задач
+    
+    pending_ids = []
+    for task_id, text, lang, speaker, _ in pending_tasks:
+        pending_ids.append({
+            'task_id': task_id,
+            'text_preview': text[:50] + '...' if len(text) > 50 else text,
+            'language': lang,
+            'speaker': speaker
         })
-        
-    except Exception as e:
-        print(f"❌ Ошибка ручной обработки очереди: {str(e)}")
-        return jsonify({'error': str(e)}), 500
+    
+    completed_tasks = {k: v for k, v in results_cache.items() if v['status'] == 'completed'}
+    failed_tasks = {k: v for k, v in results_cache.items() if v['status'] == 'failed'}
+    
+    return jsonify({
+        'queue_size': queue_size,
+        'pending_tasks': pending_ids,
+        'completed_tasks_count': len(completed_tasks),
+        'failed_tasks_count': len(failed_tasks),
+        'results_cache_size': len(results_cache),
+        'background_worker': 'active',
+        'timestamp': datetime.now().isoformat()
+    })
 
 @app.route('/api/health', methods=['GET'])
 def health_check():
     """Проверка здоровья сервиса"""
     try:
-        # Проверка Redis
-        redis_conn.ping()
-        
         # Пробуем загрузить модель, если еще не загружена
         if not tts_models:
             try:
@@ -596,14 +563,13 @@ def health_check():
         temp_files_count = len(os.listdir('/app/temp_audio')) if os.path.exists('/app/temp_audio') else 0
         
         # Проверяем размер очереди
-        queue_size = len(queue)
+        queue_size = processing_queue.qsize()
         
         return jsonify({
             'status': 'healthy',
             'service': 'zindaki-tts-service',
-            'version': '1.2',
-            'redis': 'connected',
-            'rq_worker': 'active',
+            'version': '2.0',
+            'background_worker': 'active',
             'queue_size': queue_size,
             'models_loaded': list(tts_models.keys()),
             'models_count': len(tts_models),
@@ -806,15 +772,6 @@ def debug_info():
     if os.path.exists(temp_dir):
         temp_files = os.listdir(temp_dir)
     
-    # Проверяем очередь задач
-    queue_jobs = len(queue)
-    job_ids = []
-    try:
-        jobs = queue.get_jobs()
-        job_ids = [job.id for job in jobs[:10]]  # Первые 10 задач
-    except:
-        job_ids = []
-    
     return jsonify({
         'torch_version': torch.__version__,
         'torchaudio_version': torchaudio.__version__,
@@ -829,10 +786,9 @@ def debug_info():
         'temp_files': temp_files[:20],
         'models_loaded': list(tts_models.keys()),
         'tts_models_structure': {k: list(v.keys()) for k, v in tts_models.items()} if tts_models else {},
-        'redis_connected': redis_conn.ping() if redis_conn else False,
-        'queue_size': queue_jobs,
-        'queued_jobs': job_ids,
-        'rq_worker_active': True,
+        'queue_size': processing_queue.qsize(),
+        'results_cache_size': len(results_cache),
+        'background_worker': 'active',
         'timestamp': datetime.now().isoformat()
     })
 
@@ -885,10 +841,28 @@ def cleanup_temp_files():
             print(f"⚠️ Ошибка очистки временных файлов: {e}")
 
 def periodic_cleanup():
-    """Периодическая очистка временных файлов"""
+    """Периодическая очистка временных файлов и кэша"""
     while True:
         time.sleep(3600)  # Каждый час
+        
+        # Очистка файлов
         cleanup_temp_files()
+        
+        # Очистка старых записей из кэша результатов
+        current_time = datetime.now()
+        expired_tasks = []
+        
+        for task_id, task_info in list(results_cache.items()):
+            if task_info['status'] in ['completed', 'failed']:
+                completed_time = datetime.fromisoformat(task_info.get('completed_at') or task_info.get('failed_at') or '2000-01-01')
+                if (current_time - completed_time).total_seconds() > 3600:  # 1 час
+                    expired_tasks.append(task_id)
+        
+        for task_id in expired_tasks:
+            del results_cache[task_id]
+        
+        if expired_tasks:
+            print(f"🗑️ Удалено {len(expired_tasks)} устаревших записей из кэша")
 
 # Регистрируем очистку при завершении
 atexit.register(cleanup_temp_files)
@@ -897,7 +871,7 @@ atexit.register(cleanup_temp_files)
 
 if __name__ == '__main__':
     print("\n" + "=" * 70)
-    print("🎵 ZINDAKI TTS SERVICE - Версия с работающей очередью RQ v1.2")
+    print("🎵 ZINDAKI TTS SERVICE - Упрощенная версия v2.0")
     print("=" * 70)
     print(f"📅 Дата запуска: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"🐍 Python версия: {sys.version.split()[0]}")
@@ -917,15 +891,15 @@ if __name__ == '__main__':
         os.makedirs(templates_dir, exist_ok=True)
         print(f"   Создана новая директория")
     
-    print(f"🔗 Redis: {os.getenv('REDIS_HOST', 'tts-redis')}:{os.getenv('REDIS_PORT', 6379)}")
     print("=" * 70)
     
     # Запускаем периодическую очистку в фоновом потоке
     cleanup_thread = threading.Thread(target=periodic_cleanup, daemon=True)
     cleanup_thread.start()
     
-    # Запускаем воркер RQ
-    rq_worker = start_rq_worker()
+    # Запускаем фоновый воркер для обработки задач
+    worker_thread = threading.Thread(target=background_worker, daemon=True)
+    worker_thread.start()
     
     # Предварительная загрузка основной модели
     print("\n⏳ Предварительная загрузка основной модели...")
@@ -945,6 +919,11 @@ if __name__ == '__main__':
     print("\n🚀 Запуск Flask сервера...")
     print(f"🌐 Доступен по адресу: http://0.0.0.0:5000")
     print(f"📚 API доступен по: http://0.0.0.0:5000/api/health")
+    print("\n📋 Доступные эндпоинты:")
+    print("   POST /api/tts       - Асинхронная генерация")
+    print("   POST /api/tts-sync  - Синхронная генерация (сразу файл)")
+    print("   GET  /api/status/*  - Статус задачи")
+    print("   GET  /api/queue-status - Статус очереди")
     print("=" * 70)
     
     app.run(
