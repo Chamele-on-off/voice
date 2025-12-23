@@ -15,9 +15,11 @@ import shutil
 
 # Инициализация Redis (используем отдельную БД для TTS)
 redis_conn = redis.Redis(
-    host=os.getenv('REDIS_HOST', 'localhost'),
+    host=os.getenv('REDIS_HOST', 'tts-redis'),  # МЕНЯЕМ localhost на tts-redis
     port=int(os.getenv('REDIS_PORT', 6379)),
-    db=1  # Используем БД 1, чтобы не конфликтовать с другими приложениями
+    db=1,  # Используем БД 1, чтобы не конфликтовать с другими приложениями
+    socket_connect_timeout=5,
+    socket_timeout=5
 )
 q = Queue(connection=redis_conn, default_timeout=600)
 
@@ -52,25 +54,32 @@ def load_model(language, speaker):
         # Загружаем модель через torch.hub
         device = torch.device('cpu')
         
-        model, example_text = torch.hub.load(
-            repo_or_dir='snakers4/silero-models',
-            model='silero_tts',
-            language=language,
-            speaker=speaker
-        )
-        model.to(device)
-        
-        tts_models[model_key] = {
-            'model': model,
-            'example_text': example_text,
-            'device': device
-        }
+        try:
+            model, example_text = torch.hub.load(
+                repo_or_dir='snakers4/silero-models',
+                model='silero_tts',
+                language=language,
+                speaker=speaker
+            )
+            model.to(device)
+            
+            tts_models[model_key] = {
+                'model': model,
+                'example_text': example_text,
+                'device': device
+            }
+            print(f"✅ Model {model_key} loaded successfully")
+        except Exception as e:
+            print(f"❌ Error loading model {model_key}: {e}")
+            raise
     
     return tts_models[model_key]
 
 def generate_audio(text, language, speaker, sample_rate, put_accent=True, put_yo=True):
     """Генерация аудио (вызывается из фоновой задачи)"""
     try:
+        print(f"Generating audio for: '{text[:100]}...' (lang: {language}, speaker: {speaker})")
+        
         # Загружаем модель
         model_info = load_model(language, speaker)
         model = model_info['model']
@@ -86,14 +95,14 @@ def generate_audio(text, language, speaker, sample_rate, put_accent=True, put_yo
         )
         
         # Сохраняем во временный файл
+        temp_dir = os.path.join(os.path.dirname(__file__), 'temp_audio')
+        os.makedirs(temp_dir, exist_ok=True)
+        
         temp_file = tempfile.NamedTemporaryFile(
             suffix='.wav', 
             delete=False,
-            dir=os.path.join(os.path.dirname(__file__), 'temp_audio')
+            dir=temp_dir
         )
-        
-        # Создаем директорию если нет
-        os.makedirs(os.path.dirname(temp_file.name), exist_ok=True)
         
         # Сохраняем аудио
         torchaudio.save(
@@ -103,10 +112,11 @@ def generate_audio(text, language, speaker, sample_rate, put_accent=True, put_yo
             format='wav'
         )
         
+        print(f"✅ Audio generated: {temp_file.name}")
         return temp_file.name
         
     except Exception as e:
-        print(f"Error in generate_audio: {str(e)}")
+        print(f"❌ Error in generate_audio: {str(e)}")
         raise
 
 @app.route('/')
