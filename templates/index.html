@@ -3,784 +3,582 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Zindaki TTS Service | Озвучка текста</title>
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <title>Zindaki TTS Service - Сервис озвучки</title>
     <style>
         * {
             margin: 0;
             padding: 0;
             box-sizing: border-box;
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
         }
         
         body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            line-height: 1.6;
+            color: #333;
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
             min-height: 100vh;
-            padding: 20px;
-            color: #333;
         }
         
         .container {
             max-width: 1200px;
             margin: 0 auto;
-            background: rgba(255, 255, 255, 0.98);
-            border-radius: 20px;
-            padding: 40px;
-            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.2);
+            padding: 20px;
         }
         
-        .header {
+        header {
             text-align: center;
             margin-bottom: 40px;
-        }
-        
-        .header h1 {
-            color: #2d3748;
-            font-size: 2.5rem;
-            margin-bottom: 10px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            gap: 15px;
-        }
-        
-        .header h1 i {
-            color: #764ba2;
-        }
-        
-        .subtitle {
-            color: #4a5568;
-            font-size: 1.2rem;
-            max-width: 600px;
-            margin: 0 auto;
-            line-height: 1.6;
-        }
-        
-        .service-badge {
-            display: inline-block;
-            background: linear-gradient(135deg, #667eea, #764ba2);
             color: white;
-            padding: 5px 15px;
-            border-radius: 20px;
-            font-size: 0.9rem;
-            margin-top: 10px;
-            font-weight: 500;
+        }
+        
+        header h1 {
+            font-size: 2.8rem;
+            margin-bottom: 10px;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.3);
+        }
+        
+        header p {
+            font-size: 1.2rem;
+            opacity: 0.9;
         }
         
         .main-content {
             display: grid;
             grid-template-columns: 1fr 1fr;
-            gap: 40px;
+            gap: 30px;
+            margin-bottom: 40px;
         }
         
-        @media (max-width: 900px) {
+        @media (max-width: 768px) {
             .main-content {
                 grid-template-columns: 1fr;
             }
         }
         
-        .input-section, .output-section {
+        .card {
             background: white;
-            padding: 30px;
             border-radius: 15px;
-            box-shadow: 0 5px 20px rgba(0, 0, 0, 0.05);
+            padding: 30px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+            transition: transform 0.3s ease;
         }
         
-        .section-title {
-            display: flex;
-            align-items: center;
-            gap: 10px;
-            margin-bottom: 20px;
-            color: #2d3748;
-            font-size: 1.4rem;
+        .card:hover {
+            transform: translateY(-5px);
         }
         
-        .section-title i {
+        .card h2 {
             color: #667eea;
+            margin-bottom: 20px;
+            font-size: 1.8rem;
+            border-bottom: 3px solid #667eea;
+            padding-bottom: 10px;
         }
         
         .form-group {
-            margin-bottom: 25px;
+            margin-bottom: 20px;
         }
         
         label {
             display: block;
             margin-bottom: 8px;
             font-weight: 600;
-            color: #4a5568;
+            color: #555;
+        }
+        
+        textarea, select, input {
+            width: 100%;
+            padding: 12px 15px;
+            border: 2px solid #e0e0e0;
+            border-radius: 8px;
             font-size: 1rem;
+            transition: border-color 0.3s ease;
+        }
+        
+        textarea:focus, select:focus, input:focus {
+            outline: none;
+            border-color: #667eea;
         }
         
         textarea {
-            width: 100%;
-            min-height: 180px;
-            padding: 18px;
-            border: 2px solid #e2e8f0;
-            border-radius: 12px;
-            font-size: 16px;
-            line-height: 1.6;
+            min-height: 150px;
             resize: vertical;
-            transition: all 0.3s;
         }
         
-        textarea:focus {
-            outline: none;
-            border-color: #667eea;
-            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.2);
-        }
-        
-        .controls {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 20px;
-            margin-bottom: 25px;
-        }
-        
-        @media (max-width: 600px) {
-            .controls {
-                grid-template-columns: 1fr;
-            }
-        }
-        
-        select {
-            width: 100%;
-            padding: 14px 18px;
-            border: 2px solid #e2e8f0;
-            border-radius: 12px;
-            font-size: 16px;
-            background: white;
-            cursor: pointer;
-            transition: all 0.3s;
-        }
-        
-        select:focus {
-            outline: none;
-            border-color: #667eea;
-        }
-        
-        .generate-btn {
+        button {
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
             color: white;
             border: none;
-            padding: 18px 30px;
-            border-radius: 12px;
+            padding: 15px 30px;
+            border-radius: 8px;
             font-size: 1.1rem;
             font-weight: 600;
             cursor: pointer;
-            transition: all 0.3s;
+            transition: transform 0.3s ease, box-shadow 0.3s ease;
             width: 100%;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            gap: 12px;
         }
         
-        .generate-btn:hover:not(:disabled) {
-            transform: translateY(-3px);
-            box-shadow: 0 15px 30px rgba(102, 126, 234, 0.4);
+        button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(0,0,0,0.3);
         }
         
-        .generate-btn:disabled {
+        button:disabled {
             opacity: 0.6;
             cursor: not-allowed;
+            transform: none;
         }
         
-        .status-container {
-            margin-top: 25px;
-        }
-        
-        .status-box {
+        .result-container {
+            margin-top: 20px;
             padding: 20px;
-            border-radius: 12px;
-            margin-bottom: 20px;
-            display: none;
-            align-items: center;
-            gap: 15px;
+            background: #f8f9fa;
+            border-radius: 8px;
+            border-left: 4px solid #667eea;
         }
         
-        .status-box.queued {
-            background: #feebc8;
-            color: #744210;
-            border-left: 5px solid #d69e2e;
+        .status {
+            padding: 10px 15px;
+            border-radius: 6px;
+            font-weight: 600;
+            margin-bottom: 10px;
         }
         
-        .status-box.processing {
-            background: #bee3f8;
-            color: #234e52;
-            border-left: 5px solid #3182ce;
+        .status.queued {
+            background: #fff3cd;
+            color: #856404;
+            border: 1px solid #ffeaa7;
         }
         
-        .status-box.ready {
-            background: #c6f6d5;
-            color: #22543d;
-            border-left: 5px solid #38a169;
+        .status.success {
+            background: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
         }
         
-        .status-box.error {
-            background: #fed7d7;
-            color: #742a2a;
-            border-left: 5px solid #e53e3e;
+        .status.error {
+            background: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
         }
         
-        .status-icon {
-            font-size: 1.5rem;
-        }
-        
-        .audio-container {
-            margin-top: 30px;
-            display: none;
-        }
-        
-        .audio-player {
+        audio {
             width: 100%;
             margin-top: 15px;
-            border-radius: 10px;
-            background: #f7fafc;
-            padding: 5px;
         }
         
-        .download-btn {
-            display: inline-block;
-            background: #38a169;
-            color: white;
-            padding: 12px 24px;
-            border-radius: 10px;
-            text-decoration: none;
-            font-weight: 600;
+        .audio-controls {
+            display: flex;
+            gap: 10px;
             margin-top: 15px;
-            transition: all 0.3s;
-            border: none;
-            cursor: pointer;
-            font-size: 16px;
         }
         
-        .download-btn:hover {
-            background: #2f855a;
-            transform: translateY(-2px);
-        }
-        
-        .queue-info {
-            background: #f7fafc;
-            padding: 15px;
-            border-radius: 10px;
-            margin-top: 20px;
+        .audio-controls button {
+            padding: 10px 20px;
             font-size: 0.9rem;
-            color: #4a5568;
-            display: none;
         }
         
-        .footer {
-            text-align: center;
-            margin-top: 50px;
-            padding-top: 30px;
-            border-top: 1px solid #e2e8f0;
-            color: #718096;
-            font-size: 0.95rem;
-        }
-        
-        .footer a {
-            color: #667eea;
-            text-decoration: none;
-            font-weight: 600;
-        }
-        
-        .footer a:hover {
-            text-decoration: underline;
-        }
-        
-        .system-info {
+        .info-grid {
             display: grid;
             grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
             gap: 15px;
             margin-top: 20px;
         }
         
-        .info-card {
-            background: #f7fafc;
+        .info-item {
+            background: #f8f9fa;
             padding: 15px;
-            border-radius: 10px;
+            border-radius: 8px;
             text-align: center;
         }
         
-        .info-card i {
+        .info-value {
             font-size: 1.5rem;
+            font-weight: 700;
             color: #667eea;
-            margin-bottom: 10px;
-        }
-        
-        .info-card h4 {
-            color: #2d3748;
-            margin-bottom: 5px;
-        }
-        
-        .char-count {
-            text-align: right;
             margin-top: 5px;
-            color: #718096;
-            font-size: 0.9rem;
         }
         
-        .progress-bar {
-            height: 8px;
-            background: #e2e8f0;
-            border-radius: 4px;
-            margin-top: 15px;
-            overflow: hidden;
+        footer {
+            text-align: center;
+            color: white;
+            padding: 20px;
+            opacity: 0.8;
+        }
+        
+        .spinner {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #667eea;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin: 20px auto;
+        }
+        
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        
+        .hidden {
             display: none;
-        }
-        
-        .progress-fill {
-            height: 100%;
-            background: linear-gradient(90deg, #667eea, #764ba2);
-            width: 0%;
-            transition: width 0.5s ease;
-        }
-        
-        .language-example {
-            font-size: 0.9rem;
-            color: #718096;
-            margin-top: 5px;
-            font-style: italic;
         }
     </style>
 </head>
 <body>
     <div class="container">
-        <div class="header">
-            <h1><i class="fas fa-robot"></i> Zindaki TTS Service</h1>
-            <p class="subtitle">Высококачественная нейросетевая озвучка текста на русском и английском языках. Поддерживает до 100 одновременных запросов.</p>
-            <span class="service-badge">Сервис для tts.zindaki-edu.ru</span>
-        </div>
+        <header>
+            <h1>🎵 Zindaki TTS Service</h1>
+            <p>Сервис озвучки текста для онлайн-школы</p>
+        </header>
         
         <div class="main-content">
-            <div class="input-section">
-                <div class="section-title">
-                    <i class="fas fa-keyboard"></i>
-                    <h2>Ввод текста</h2>
-                </div>
-                
-                <div class="form-group">
-                    <label for="text">Текст для озвучки:</label>
-                    <textarea id="text" placeholder="Введите текст для озвучки на русском или английском языке. Например: Здравствуйте! Добро пожаловать в Zindaki Academy. Hello! Welcome to Zindaki Academy."></textarea>
-                    <div class="char-count" id="charCount">0 символов</div>
-                </div>
-                
-                <div class="controls">
-                    <div>
-                        <label for="language">Язык:</label>
-                        <select id="language">
-                            <option value="ru">Русский</option>
-                            <option value="en">Английский</option>
-                        </select>
-                        <div class="language-example" id="ru-example">Пример: Здравствуйте, как ваши дела?</div>
-                        <div class="language-example" id="en-example" style="display: none;">Example: Hello, how are you doing?</div>
+            <!-- Левая колонка: Форма генерации -->
+            <div class="card">
+                <h2>Генерация речи</h2>
+                <form id="ttsForm">
+                    <div class="form-group">
+                        <label for="text">Текст для озвучки:</label>
+                        <textarea id="text" placeholder="Введите текст для озвучки..." required>Привет! Это демонстрация работы TTS сервиса. Введите свой текст и нажмите "Сгенерировать речь".</textarea>
                     </div>
                     
-                    <div>
-                        <label for="speaker">Голос:</label>
-                        <select id="speaker">
-                            <option value="aidar">Айдар (мужской)</option>
-                            <option value="baya">Бая (женский)</option>
-                            <option value="kseniya">Ксения (женский)</option>
+                    <div class="form-group">
+                        <label for="language">Язык:</label>
+                        <select id="language">
+                            <option value="ru" selected>Русский</option>
+                            <option value="en">Английский</option>
                         </select>
                     </div>
-                </div>
+                    
+                    <div class="form-group">
+                        <label for="speaker">Голос:</label>
+                        <select id="speaker">
+                            <option value="baya" selected>Байя (женский)</option>
+                            <option value="kseniya">Ксения (женский)</option>
+                            <option value="aidar">Айдар (мужской)</option>
+                        </select>
+                    </div>
+                    
+                    <button type="submit" id="generateBtn">
+                        🎵 Сгенерировать речь
+                    </button>
+                </form>
                 
-                <button id="generateBtn" class="generate-btn">
-                    <i class="fas fa-play-circle"></i>
-                    <span>Сгенерировать аудио</span>
-                </button>
-                
-                <div class="progress-bar" id="progressBar">
-                    <div class="progress-fill" id="progressFill"></div>
-                </div>
-                
-                <div class="queue-info" id="queueInfo">
-                    <i class="fas fa-clock"></i>
-                    <span id="queueText">Обработка начнется в ближайшее время</span>
-                </div>
-                
-                <div class="status-container">
-                    <div class="status-box" id="statusBox">
-                        <div class="status-icon" id="statusIcon"></div>
-                        <div>
-                            <div id="statusTitle">Статус</div>
-                            <div id="statusMessage">Ожидание запроса</div>
+                <div id="resultContainer" class="result-container hidden">
+                    <div id="status" class="status"></div>
+                    <div id="resultInfo"></div>
+                    <div id="audioContainer" class="hidden">
+                        <audio id="audioPlayer" controls></audio>
+                        <div class="audio-controls">
+                            <button onclick="downloadAudio()">💾 Скачать</button>
+                            <button onclick="playAudio()">▶️ Воспроизвести</button>
+                            <button onclick="stopAudio()">⏹️ Остановить</button>
                         </div>
                     </div>
+                    <div class="spinner hidden" id="loadingSpinner"></div>
                 </div>
             </div>
             
-            <div class="output-section">
-                <div class="section-title">
-                    <i class="fas fa-volume-up"></i>
-                    <h2>Результат</h2>
-                </div>
+            <!-- Правая колонка: Информация и статус -->
+            <div class="card">
+                <h2>Информация о сервисе</h2>
                 
-                <div class="system-info">
-                    <div class="info-card">
-                        <i class="fas fa-bolt"></i>
-                        <h4>Быстрая обработка</h4>
-                        <p>3-15 секунд</p>
+                <div class="info-grid">
+                    <div class="info-item">
+                        <div>Статус</div>
+                        <div class="info-value" id="serviceStatus">Проверка...</div>
                     </div>
                     
-                    <div class="info-card">
-                        <i class="fas fa-users"></i>
-                        <h4>Масштабируемость</h4>
-                        <p>100+ запросов</p>
+                    <div class="info-item">
+                        <div>Моделей загружено</div>
+                        <div class="info-value" id="modelsCount">0</div>
                     </div>
                     
-                    <div class="info-card">
-                        <i class="fas fa-microphone"></i>
-                        <h4>Качество</h4>
-                        <p>24 кГц, стерео</p>
+                    <div class="info-item">
+                        <div>PyTorch версия</div>
+                        <div class="info-value" id="torchVersion">...</div>
                     </div>
-                </div>
-                
-                <div class="audio-container" id="audioContainer">
-                    <h3>Ваше аудио готово:</h3>
                     
-                    <audio id="audioPlayer" class="audio-player" controls>
-                        Ваш браузер не поддерживает воспроизведение аудио.
-                    </audio>
-                    
-                    <div style="margin-top: 20px;">
-                        <button id="downloadBtn" class="download-btn">
-                            <i class="fas fa-download"></i>
-                            Скачать аудиофайл
-                        </button>
+                    <div class="info-item">
+                        <div>Время работы</div>
+                        <div class="info-value" id="uptime">...</div>
                     </div>
                 </div>
                 
-                <div style="margin-top: 30px; text-align: center; color: #718096; font-size: 0.9rem;">
-                    <p><i class="fas fa-info-circle"></i> Аудиофайлы хранятся 1 час, затем автоматически удаляются</p>
+                <div class="form-group" style="margin-top: 20px;">
+                    <label>Доступные голоса:</label>
+                    <div id="voicesList" style="padding: 10px; background: #f8f9fa; border-radius: 8px;">
+                        Загрузка...
+                    </div>
                 </div>
+                
+                <button onclick="loadVoices()" style="margin-top: 15px; background: #28a745;">
+                    🔄 Обновить информацию
+                </button>
+                
+                <button onclick="runTest()" style="margin-top: 10px; background: #17a2b8;">
+                    🧪 Тестовый запрос
+                </button>
             </div>
         </div>
         
-        <div class="footer">
-            <p>Сервис озвучки работает на базе <a href="https://github.com/snakers4/silero-models" target="_blank">Silero TTS</a></p>
-            <p>© 2024 <a href="https://zindaki-edu.ru" target="_blank">Zindaki Academy</a> | AI-репетитор для современного образования</p>
-            <p style="margin-top: 10px; font-size: 0.85rem;">
-                <a href="https://ai.zindaki-edu.ru" target="_blank">AI-репетитор</a> | 
-                <a href="https://zindaki-edu.ru" target="_blank">Главный сайт</a>
-            </p>
-        </div>
+        <footer>
+            <p>Zindaki TTS Service • Сервис озвучки для образовательных платформ</p>
+            <p>API: <code>/api/tts</code> • <code>/api/health</code> • <code>/api/voices</code></p>
+        </footer>
     </div>
-
+    
     <script>
+        // Элементы DOM
+        const ttsForm = document.getElementById('ttsForm');
+        const generateBtn = document.getElementById('generateBtn');
+        const resultContainer = document.getElementById('resultContainer');
+        const statusDiv = document.getElementById('status');
+        const resultInfo = document.getElementById('resultInfo');
+        const audioContainer = document.getElementById('audioContainer');
+        const audioPlayer = document.getElementById('audioPlayer');
+        const loadingSpinner = document.getElementById('loadingSpinner');
+        
+        // Элементы информации
+        const serviceStatus = document.getElementById('serviceStatus');
+        const modelsCount = document.getElementById('modelsCount');
+        const torchVersion = document.getElementById('torchVersion');
+        const uptime = document.getElementById('uptime');
+        const voicesList = document.getElementById('voicesList');
+        
+        // Текущий job_id
+        let currentJobId = null;
+        let checkStatusInterval = null;
+        
+        // При загрузке страницы
         document.addEventListener('DOMContentLoaded', function() {
-            // Элементы интерфейса
-            const textInput = document.getElementById('text');
-            const languageSelect = document.getElementById('language');
-            const speakerSelect = document.getElementById('speaker');
-            const generateBtn = document.getElementById('generateBtn');
-            const statusBox = document.getElementById('statusBox');
-            const statusTitle = document.getElementById('statusTitle');
-            const statusMessage = document.getElementById('statusMessage');
-            const statusIcon = document.getElementById('statusIcon');
-            const audioPlayer = document.getElementById('audioPlayer');
-            const audioContainer = document.getElementById('audioContainer');
-            const downloadBtn = document.getElementById('downloadBtn');
-            const queueInfo = document.getElementById('queueInfo');
-            const queueText = document.getElementById('queueText');
-            const progressBar = document.getElementById('progressBar');
-            const progressFill = document.getElementById('progressFill');
-            const charCount = document.getElementById('charCount');
-            const ruExample = document.getElementById('ru-example');
-            const enExample = document.getElementById('en-example');
+            checkHealth();
+            loadVoices();
             
-            // Переменные состояния
-            let currentJobId = null;
-            let checkInterval = null;
-            let audioUrl = null;
-            
-            // Счетчик символов
-            textInput.addEventListener('input', function() {
-                const count = textInput.value.length;
-                charCount.textContent = `${count} символов`;
+            // Устанавливаем максимальную длину текста
+            const textarea = document.getElementById('text');
+            textarea.addEventListener('input', function() {
+                const maxLength = 5000;
+                if (this.value.length > maxLength) {
+                    this.value = this.value.substring(0, maxLength);
+                    alert(`Максимальная длина текста: ${maxLength} символов`);
+                }
+            });
+        });
+        
+        // Проверка здоровья сервиса
+        async function checkHealth() {
+            try {
+                const response = await fetch('/api/health');
+                const data = await response.json();
                 
-                if (count > 5000) {
-                    charCount.style.color = '#e53e3e';
-                } else if (count > 2000) {
-                    charCount.style.color = '#d69e2e';
+                if (data.status === 'healthy') {
+                    serviceStatus.textContent = '✅ Работает';
+                    serviceStatus.style.color = '#28a745';
+                    modelsCount.textContent = data.models_count || 0;
+                    torchVersion.textContent = data.torch_version || 'N/A';
+                    uptime.textContent = data.uptime ? data.uptime.split('.')[0] : 'N/A';
                 } else {
-                    charCount.style.color = '#718096';
+                    serviceStatus.textContent = '❌ Ошибка';
+                    serviceStatus.style.color = '#dc3545';
                 }
-            });
-            
-            // Примеры текста для языков
-            languageSelect.addEventListener('change', function() {
-                if (this.value === 'ru') {
-                    ruExample.style.display = 'block';
-                    enExample.style.display = 'none';
-                } else {
-                    ruExample.style.display = 'none';
-                    enExample.style.display = 'block';
-                }
-            });
-            
-            // Обновляем список голосов при смене языка
-            languageSelect.addEventListener('change', async function() {
-                try {
-                    const response = await fetch('/api/voices');
-                    if (response.ok) {
-                        const voices = await response.json();
-                        const lang = this.value;
-                        
-                        speakerSelect.innerHTML = '';
-                        
-                        if (voices[lang]) {
-                            voices[lang].forEach(voice => {
-                                const option = document.createElement('option');
-                                option.value = voice;
-                                
-                                // Преобразуем имена голосов в читаемый формат
-                                let voiceName = voice;
-                                if (voice === 'aidar') voiceName = 'Айдар (мужской)';
-                                else if (voice === 'baya') voiceName = 'Бая (женский)';
-                                else if (voice === 'kseniya') voiceName = 'Ксения (женский)';
-                                else if (voice === 'xenia') voiceName = 'Ксения (альт.)';
-                                else if (voice.startsWith('en_')) voiceName = `Голос ${voice.split('_')[1]} (англ.)`;
-                                
-                                option.textContent = voiceName;
-                                speakerSelect.appendChild(option);
-                            });
-                        }
-                    }
-                } catch (error) {
-                    console.error('Ошибка загрузки голосов:', error);
-                }
-            });
-            
-            // Загружаем доступные голоса при загрузке страницы
-            languageSelect.dispatchEvent(new Event('change'));
-            
-            // Обработчик кнопки генерации
-            generateBtn.addEventListener('click', async function() {
-                const text = textInput.value.trim();
-                if (!text) {
-                    showStatus('Введите текст для озвучки', 'error', 'Ошибка', 'fas fa-exclamation-circle');
-                    return;
-                }
+            } catch (error) {
+                serviceStatus.textContent = '❌ Недоступен';
+                serviceStatus.style.color = '#dc3545';
+                console.error('Ошибка проверки здоровья:', error);
+            }
+        }
+        
+        // Загрузка списка голосов
+        async function loadVoices() {
+            try {
+                const response = await fetch('/api/voices');
+                const data = await response.json();
                 
-                if (text.length > 10000) {
-                    showStatus('Текст слишком длинный (максимум 10000 символов)', 'error', 'Ошибка', 'fas fa-exclamation-circle');
-                    return;
-                }
+                let voicesHtml = '';
                 
-                // Показываем прогресс
-                progressBar.style.display = 'block';
-                progressFill.style.width = '5%';
-                
-                showStatus('Отправка запроса...', 'queued', 'В очереди', 'fas fa-clock');
-                queueInfo.style.display = 'flex';
-                generateBtn.disabled = true;
-                generateBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i><span>Обработка...</span>';
-                
-                try {
-                    // 1. Отправляем запрос на генерацию
-                    const response = await fetch('/api/tts', {
-                        method: 'POST',
-                        headers: { 
-                            'Content-Type': 'application/json',
-                            'Accept': 'application/json'
-                        },
-                        body: JSON.stringify({
-                            text: text,
-                            language: languageSelect.value,
-                            speaker: speakerSelect.value,
-                            sample_rate: 24000,
-                            put_accent: true,
-                            put_yo: true
-                        })
+                if (data.all_voices && data.all_voices.ru) {
+                    data.all_voices.ru.forEach(voice => {
+                        const isLoaded = data.loaded_voices?.ru?.some(v => v.id === voice.id) || false;
+                        voicesHtml += `
+                            <div style="margin: 5px 0; padding: 5px; background: ${isLoaded ? '#d4edda' : '#f8d7da'}; border-radius: 4px;">
+                                <strong>${voice.name}</strong> (${voice.id})
+                                <span style="float: right; font-size: 0.9em;">
+                                    ${isLoaded ? '✅ Загружен' : '❌ Не загружен'}
+                                </span>
+                            </div>
+                        `;
                     });
-                    
-                    const data = await response.json();
-                    
-                    if (!response.ok) {
-                        throw new Error(data.error || `Ошибка сервера: ${response.status}`);
-                    }
+                }
+                
+                voicesList.innerHTML = voicesHtml;
+            } catch (error) {
+                voicesList.innerHTML = '<div style="color: #dc3545;">Ошибка загрузки голосов</div>';
+                console.error('Ошибка загрузки голосов:', error);
+            }
+        }
+        
+        // Обработка формы генерации
+        ttsForm.addEventListener('submit', async function(e) {
+            e.preventDefault();
+            
+            const text = document.getElementById('text').value;
+            const language = document.getElementById('language').value;
+            const speaker = document.getElementById('speaker').value;
+            
+            if (!text.trim()) {
+                alert('Пожалуйста, введите текст для озвучки');
+                return;
+            }
+            
+            // Показываем результат контейнер
+            resultContainer.classList.remove('hidden');
+            audioContainer.classList.add('hidden');
+            loadingSpinner.classList.remove('hidden');
+            
+            // Обновляем статус
+            statusDiv.textContent = 'Отправка запроса...';
+            statusDiv.className = 'status queued';
+            resultInfo.textContent = '';
+            
+            // Блокируем кнопку
+            generateBtn.disabled = true;
+            generateBtn.textContent = '⏳ Обработка...';
+            
+            try {
+                const response = await fetch('/api/tts', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        text: text,
+                        language: language,
+                        speaker: speaker,
+                        sample_rate: 16000
+                    })
+                });
+                
+                const data = await response.json();
+                
+                if (response.status === 202) {
+                    statusDiv.textContent = 'Задача в очереди';
+                    statusDiv.className = 'status queued';
+                    resultInfo.textContent = `Job ID: ${data.job_id}`;
                     
                     currentJobId = data.job_id;
-                    queueText.textContent = data.message || 'Задача в очереди на обработку';
-                    progressFill.style.width = '20%';
-                    
-                    showStatus('Задача в очереди. Обработка начнется в ближайшее время...', 
-                              'processing', 'В обработке', 'fas fa-cogs');
-                    
-                    // 2. Начинаем периодически проверять статус задачи
-                    startStatusPolling();
-                    
-                } catch (error) {
-                    console.error('Ошибка запроса:', error);
-                    showStatus(`Ошибка: ${error.message}`, 'error', 'Ошибка', 'fas fa-exclamation-circle');
-                    resetUI();
+                    startCheckingStatus();
+                } else {
+                    throw new Error(data.error || 'Неизвестная ошибка');
                 }
-            });
-            
-            // Функция для опроса статуса задачи
-            function startStatusPolling() {
-                if (checkInterval) {
-                    clearInterval(checkInterval);
-                }
-                
-                let attempts = 0;
-                const maxAttempts = 300; // 10 минут (300 * 2 секунды)
-                
-                checkInterval = setInterval(async () => {
-                    if (!currentJobId) {
-                        clearInterval(checkInterval);
-                        return;
-                    }
-                    
-                    attempts++;
-                    
-                    // Обновляем прогресс бар (имитация)
-                    if (attempts < 10) {
-                        progressFill.style.width = `${20 + attempts * 3}%`;
-                    } else if (attempts < 20) {
-                        progressFill.style.width = `${50 + (attempts - 10) * 2}%`;
-                    } else {
-                        progressFill.style.width = `${70 + (attempts - 20)}%`;
-                    }
-                    
-                    try {
-                        const statusResponse = await fetch(`/api/status/${currentJobId}`);
-                        
-                        if (statusResponse.status === 200) {
-                            // Задача завершена успешно - получаем аудиофайл
-                            clearInterval(checkInterval);
-                            progressFill.style.width = '100%';
-                            
-                            // Получаем аудио как Blob
-                            const audioBlob = await statusResponse.blob();
-                            
-                            if (audioBlob.size === 0) {
-                                throw new Error('Получен пустой аудиофайл');
-                            }
-                            
-                            // Создаем URL для воспроизведения
-                            if (audioUrl) {
-                                URL.revokeObjectURL(audioUrl);
-                            }
-                            audioUrl = URL.createObjectURL(audioBlob);
-                            
-                            // Настраиваем аудиоплеер
-                            audioPlayer.src = audioUrl;
-                            audioContainer.style.display = 'block';
-                            
-                            // Настраиваем кнопку скачивания
-                            downloadBtn.onclick = function() {
-                                const a = document.createElement('a');
-                                a.href = audioUrl;
-                                a.download = `tts_${currentJobId}.wav`;
-                                document.body.appendChild(a);
-                                a.click();
-                                document.body.removeChild(a);
-                            };
-                            
-                            // Автовоспроизведение
-                            setTimeout(() => {
-                                audioPlayer.play().catch(e => {
-                                    console.log('Автовоспроизведение заблокировано:', e);
-                                });
-                            }, 500);
-                            
-                            showStatus('Аудио успешно сгенерировано!', 'ready', 'Готово', 'fas fa-check-circle');
-                            queueInfo.style.display = 'none';
-                            
-                            // Через 5 секунд скрываем статус
-                            setTimeout(() => {
-                                statusBox.style.display = 'none';
-                            }, 5000);
-                            
-                            resetUI();
-                            
-                        } else if (statusResponse.status === 202) {
-                            // Задача еще выполняется
-                            const statusData = await statusResponse.json();
-                            const position = statusData.position || 'unknown';
-                            
-                            if (position !== 'unknown') {
-                                queueText.textContent = `Позиция в очереди: ${position}`;
-                            }
-                            
-                            showStatus('Обработка текста нейросетью...', 
-                                      'processing', 'В обработке', 'fas fa-cogs');
-                            
-                        } else if (statusResponse.status === 500) {
-                            // Ошибка задачи
-                            const errorData = await statusResponse.json();
-                            clearInterval(checkInterval);
-                            showStatus(`Ошибка генерации: ${errorData.error || 'Неизвестная ошибка'}`, 
-                                      'error', 'Ошибка', 'fas fa-exclamation-circle');
-                            resetUI();
-                            
-                        } else {
-                            // Другие статусы
-                            const statusData = await statusResponse.json();
-                            showStatus(`Статус: ${statusData.status || 'processing'}`, 
-                                      'processing', 'В обработке', 'fas fa-cogs');
-                        }
-                        
-                    } catch (error) {
-                        console.error('Ошибка проверки статуса:', error);
-                        
-                        if (attempts >= maxAttempts) {
-                            clearInterval(checkInterval);
-                            showStatus('Превышено время ожидания (10 минут)', 
-                                      'error', 'Таймаут', 'fas fa-hourglass-end');
-                            resetUI();
-                        }
-                    }
-                }, 2000); // Проверяем каждые 2 секунды
-            }
-            
-            // Функция показа статуса
-            function showStatus(message, type, title, icon) {
-                statusTitle.textContent = title;
-                statusMessage.textContent = message;
-                statusIcon.className = `status-icon ${icon}`;
-                
-                statusBox.className = `status-box ${type}`;
-                statusBox.style.display = 'flex';
-            }
-            
-            // Функция сброса UI
-            function resetUI() {
+            } catch (error) {
+                statusDiv.textContent = 'Ошибка отправки';
+                statusDiv.className = 'status error';
+                resultInfo.textContent = error.message;
+                loadingSpinner.classList.add('hidden');
                 generateBtn.disabled = false;
-                generateBtn.innerHTML = '<i class="fas fa-play-circle"></i><span>Сгенерировать аудио</span>';
-                
-                // Прячем прогресс бар через секунду
-                setTimeout(() => {
-                    progressBar.style.display = 'none';
-                    progressFill.style.width = '0%';
-                }, 1000);
+                generateBtn.textContent = '🎵 Сгенерировать речь';
+            }
+        });
+        
+        // Начинаем проверку статуса задачи
+        function startCheckingStatus() {
+            if (checkStatusInterval) {
+                clearInterval(checkStatusInterval);
             }
             
-            // Очистка при закрытии страницы
-            window.addEventListener('beforeunload', function() {
-                if (audioUrl) {
-                    URL.revokeObjectURL(audioUrl);
-                }
-                if (checkInterval) {
-                    clearInterval(checkInterval);
-                }
-            });
-            
-            // Проверяем здоровье сервиса при загрузке
-            fetch('/api/health')
-                .then(response => response.json())
-                .then(data => {
-                    if (data.status === 'healthy') {
-                        console.log('TTS сервис работает нормально');
+            checkStatusInterval = setInterval(async () => {
+                try {
+                    const response = await fetch(`/api/status/${currentJobId}`);
+                    
+                    if (response.status === 200) {
+                        // Задача завершена, получаем аудио
+                        const audioBlob = await response.blob();
+                        const audioUrl = URL.createObjectURL(audioBlob);
+                        
+                        audioPlayer.src = audioUrl;
+                        audioContainer.classList.remove('hidden');
+                        loadingSpinner.classList.add('hidden');
+                        
+                        statusDiv.textContent = 'Аудио готово!';
+                        statusDiv.className = 'status success';
+                        resultInfo.textContent = 'Нажмите кнопку воспроизведения или скачайте файл';
+                        
+                        // Разблокируем кнопку
+                        generateBtn.disabled = false;
+                        generateBtn.textContent = '🎵 Сгенерировать речь';
+                        
+                        clearInterval(checkStatusInterval);
+                    } else if (response.status === 500) {
+                        // Ошибка задачи
+                        const errorData = await response.json();
+                        throw new Error(errorData.error || 'Ошибка генерации');
+                    } else {
+                        // Задача еще выполняется
+                        const statusData = await response.json();
+                        statusDiv.textContent = `Статус: ${statusData.status}`;
+                        if (statusData.position) {
+                            resultInfo.textContent = `Позиция в очереди: ${statusData.position}`;
+                        }
                     }
-                })
-                .catch(error => {
-                    console.warn('Не удалось проверить здоровье сервиса:', error);
-                });
-        });
+                } catch (error) {
+                    statusDiv.textContent = 'Ошибка генерации';
+                    statusDiv.className = 'status error';
+                    resultInfo.textContent = error.message;
+                    loadingSpinner.classList.add('hidden');
+                    generateBtn.disabled = false;
+                    generateBtn.textContent = '🎵 Сгенерировать речь';
+                    
+                    clearInterval(checkStatusInterval);
+                }
+            }, 2000); // Проверяем каждые 2 секунды
+        }
+        
+        // Воспроизведение аудио
+        function playAudio() {
+            audioPlayer.play().catch(e => {
+                console.error('Ошибка воспроизведения:', e);
+                alert('Ошибка воспроизведения аудио');
+            });
+        }
+        
+        // Остановка аудио
+        function stopAudio() {
+            audioPlayer.pause();
+            audioPlayer.currentTime = 0;
+        }
+        
+        // Скачивание аудио
+        function downloadAudio() {
+            if (!audioPlayer.src) return;
+            
+            const a = document.createElement('a');
+            a.href = audioPlayer.src;
+            a.download = `tts_${currentJobId || Date.now()}.wav`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+        }
+        
+        // Тестовый запрос
+        async function runTest() {
+            try {
+                const response = await fetch('/api/test');
+                const data = await response.json();
+                
+                if (data.success) {
+                    alert(`✅ Тест пройден успешно!\nТип результата: ${data.result_type}\nФормат аудио: ${data.audio_shape}`);
+                } else {
+                    alert(`❌ Тест не пройден: ${data.error}`);
+                }
+            } catch (error) {
+                alert(`❌ Ошибка теста: ${error.message}`);
+            }
+        }
+        
+        // Обновление информации каждые 30 секунд
+        setInterval(checkHealth, 30000);
     </script>
 </body>
 </html>
