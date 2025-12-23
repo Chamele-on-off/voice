@@ -584,16 +584,21 @@ def process_task_manual(task_id):
             
             logger.info(f"✅ Задача {task_id} обработана вручную")
             
-            # Удаляем задачу из очереди
             # Создаем новую очередь без этой задачи
             new_queue = python_queue.Queue()
             for tid, t, l, s, sr in temp_queue:
                 if tid != task_id:
                     new_queue.put((tid, t, l, s, sr))
             
-            # Заменяем старую очередь
-            global processing_queue
-            processing_queue = new_queue
+            # Очищаем старую очередь и добавляем элементы из новой
+            while not processing_queue.empty():
+                try:
+                    processing_queue.get_nowait()
+                except python_queue.Empty:
+                    break
+            
+            for tid, t, l, s, sr in list(new_queue.queue):
+                processing_queue.put((tid, t, l, s, sr))
             
             return jsonify({
                 'message': 'Task processed manually',
