@@ -20,7 +20,7 @@
         }
         
         .container {
-            max-width: 1200px;
+            max-width: 1400px;
             margin: 0 auto;
             padding: 20px;
         }
@@ -49,7 +49,7 @@
             margin-bottom: 40px;
         }
         
-        @media (max-width: 768px) {
+        @media (max-width: 992px) {
             .main-content {
                 grid-template-columns: 1fr;
             }
@@ -73,6 +73,12 @@
             font-size: 1.8rem;
             border-bottom: 3px solid #667eea;
             padding-bottom: 10px;
+        }
+        
+        .card h3 {
+            color: #555;
+            margin: 20px 0 15px 0;
+            font-size: 1.3rem;
         }
         
         .form-group {
@@ -105,17 +111,27 @@
             resize: vertical;
         }
         
+        .button-group {
+            display: flex;
+            gap: 15px;
+            margin-top: 25px;
+        }
+        
         button {
+            flex: 1;
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
             color: white;
             border: none;
-            padding: 15px 30px;
+            padding: 15px 20px;
             border-radius: 8px;
-            font-size: 1.1rem;
+            font-size: 1rem;
             font-weight: 600;
             cursor: pointer;
-            transition: transform 0.3s ease, box-shadow 0.3s ease;
-            width: 100%;
+            transition: all 0.3s ease;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
         }
         
         button:hover {
@@ -129,8 +145,20 @@
             transform: none;
         }
         
+        button.sync-btn {
+            background: linear-gradient(135deg, #28a745 0%, #20c997 100%);
+        }
+        
+        button.async-btn {
+            background: linear-gradient(135deg, #17a2b8 0%, #20c9b8 100%);
+        }
+        
+        button.test-btn {
+            background: linear-gradient(135deg, #6f42c1 0%, #a370f7 100%);
+        }
+        
         .result-container {
-            margin-top: 20px;
+            margin-top: 25px;
             padding: 20px;
             background: #f8f9fa;
             border-radius: 8px;
@@ -138,16 +166,25 @@
         }
         
         .status {
-            padding: 10px 15px;
+            padding: 12px 15px;
             border-radius: 6px;
             font-weight: 600;
-            margin-bottom: 10px;
+            margin-bottom: 15px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
         }
         
         .status.queued {
             background: #fff3cd;
             color: #856404;
             border: 1px solid #ffeaa7;
+        }
+        
+        .status.processing {
+            background: #cce5ff;
+            color: #004085;
+            border: 1px solid #b8daff;
         }
         
         .status.success {
@@ -165,6 +202,7 @@
         audio {
             width: 100%;
             margin-top: 15px;
+            border-radius: 8px;
         }
         
         .audio-controls {
@@ -176,6 +214,7 @@
         .audio-controls button {
             padding: 10px 20px;
             font-size: 0.9rem;
+            flex: none;
         }
         
         .info-grid {
@@ -190,6 +229,7 @@
             padding: 15px;
             border-radius: 8px;
             text-align: center;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.05);
         }
         
         .info-value {
@@ -224,6 +264,53 @@
         .hidden {
             display: none;
         }
+        
+        .queue-info {
+            background: #e9ecef;
+            padding: 15px;
+            border-radius: 8px;
+            margin-top: 15px;
+            font-size: 0.9rem;
+        }
+        
+        .mode-description {
+            margin-top: 10px;
+            font-size: 0.9rem;
+            color: #666;
+            padding: 10px;
+            background: #f8f9fa;
+            border-radius: 6px;
+            border-left: 3px solid #667eea;
+        }
+        
+        .mode-description h4 {
+            margin-bottom: 5px;
+            color: #555;
+        }
+        
+        .sync-indicator {
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+            font-size: 0.8rem;
+            padding: 3px 8px;
+            border-radius: 12px;
+            background: #28a745;
+            color: white;
+            margin-left: 10px;
+        }
+        
+        .async-indicator {
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+            font-size: 0.8rem;
+            padding: 3px 8px;
+            border-radius: 12px;
+            background: #17a2b8;
+            color: white;
+            margin-left: 10px;
+        }
     </style>
 </head>
 <body>
@@ -237,10 +324,17 @@
             <!-- Левая колонка: Форма генерации -->
             <div class="card">
                 <h2>Генерация речи</h2>
+                
+                <div class="mode-description">
+                    <h4>📋 Доступные режимы:</h4>
+                    <p><strong>Синхронный режим</strong> — мгновенная генерация, подходит для коротких текстов</p>
+                    <p><strong>Асинхронный режим</strong> — через очередь, подходит для длинных текстов и фоновой обработки</p>
+                </div>
+                
                 <form id="ttsForm">
                     <div class="form-group">
                         <label for="text">Текст для озвучки:</label>
-                        <textarea id="text" placeholder="Введите текст для озвучки..." required>Привет! Это демонстрация работы TTS сервиса. Введите свой текст и нажмите "Сгенерировать речь".</textarea>
+                        <textarea id="text" placeholder="Введите текст для озвучки..." required>Привет! Это демонстрация работы TTS сервиса. Введите свой текст и выберите режим генерации.</textarea>
                     </div>
                     
                     <div class="form-group">
@@ -260,23 +354,38 @@
                         </select>
                     </div>
                     
-                    <button type="submit" id="generateBtn">
-                        🎵 Сгенерировать речь
-                    </button>
+                    <div class="button-group">
+                        <button type="button" id="syncBtn" class="sync-btn">
+                            ⚡ Синхронная генерация
+                        </button>
+                        <button type="button" id="asyncBtn" class="async-btn">
+                            🔄 Асинхронная генерация
+                        </button>
+                    </div>
                 </form>
                 
                 <div id="resultContainer" class="result-container hidden">
                     <div id="status" class="status"></div>
                     <div id="resultInfo"></div>
+                    <div id="queueInfo" class="queue-info hidden"></div>
                     <div id="audioContainer" class="hidden">
                         <audio id="audioPlayer" controls></audio>
                         <div class="audio-controls">
-                            <button onclick="downloadAudio()">💾 Скачать</button>
+                            <button onclick="downloadAudio()">💾 Скачать WAV</button>
                             <button onclick="playAudio()">▶️ Воспроизвести</button>
                             <button onclick="stopAudio()">⏹️ Остановить</button>
                         </div>
                     </div>
                     <div class="spinner hidden" id="loadingSpinner"></div>
+                </div>
+                
+                <div class="button-group" style="margin-top: 20px;">
+                    <button type="button" onclick="testSyncGeneration()" class="test-btn">
+                        🧪 Тест синхронный
+                    </button>
+                    <button type="button" onclick="testAsyncGeneration()" class="test-btn">
+                        🧪 Тест асинхронный
+                    </button>
                 </div>
             </div>
             
@@ -286,7 +395,7 @@
                 
                 <div class="info-grid">
                     <div class="info-item">
-                        <div>Статус</div>
+                        <div>Статус сервиса</div>
                         <div class="info-value" id="serviceStatus">Проверка...</div>
                     </div>
                     
@@ -296,8 +405,8 @@
                     </div>
                     
                     <div class="info-item">
-                        <div>PyTorch версия</div>
-                        <div class="info-value" id="torchVersion">...</div>
+                        <div>Очередь задач</div>
+                        <div class="info-value" id="queueSize">0</div>
                     </div>
                     
                     <div class="info-item">
@@ -308,34 +417,47 @@
                 
                 <div class="form-group" style="margin-top: 20px;">
                     <label>Доступные голоса:</label>
-                    <div id="voicesList" style="padding: 10px; background: #f8f9fa; border-radius: 8px;">
+                    <div id="voicesList" style="padding: 10px; background: #f8f9fa; border-radius: 8px; max-height: 200px; overflow-y: auto;">
                         Загрузка...
                     </div>
                 </div>
                 
-                <button onclick="loadVoices()" style="margin-top: 15px; background: #28a745;">
-                    🔄 Обновить информацию
-                </button>
+                <h3>Управление задачами</h3>
+                <div class="button-group">
+                    <button onclick="checkQueueStatus()" style="background: #6c757d;">
+                        📊 Статус очереди
+                    </button>
+                    <button onclick="clearResultsCache()" style="background: #dc3545;">
+                        🗑️ Очистить кэш
+                    </button>
+                </div>
                 
-                <button onclick="runTest()" style="margin-top: 10px; background: #17a2b8;">
-                    🧪 Тестовый запрос
-                </button>
+                <div class="button-group" style="margin-top: 15px;">
+                    <button onclick="loadVoices()" style="background: #28a745;">
+                        🔄 Обновить информацию
+                    </button>
+                    <button onclick="runTest()" style="background: #17a2b8;">
+                        🧪 Тест API
+                    </button>
+                </div>
             </div>
         </div>
         
         <footer>
             <p>Zindaki TTS Service • Сервис озвучки для образовательных платформ</p>
-            <p>API: <code>/api/tts</code> • <code>/api/health</code> • <code>/api/voices</code></p>
+            <p>API: <code>/api/tts</code> • <code>/api/tts-sync</code> • <code>/api/health</code> • <code>/api/status/&lt;id&gt;</code></p>
         </footer>
     </div>
     
     <script>
         // Элементы DOM
         const ttsForm = document.getElementById('ttsForm');
-        const generateBtn = document.getElementById('generateBtn');
+        const syncBtn = document.getElementById('syncBtn');
+        const asyncBtn = document.getElementById('asyncBtn');
         const resultContainer = document.getElementById('resultContainer');
         const statusDiv = document.getElementById('status');
         const resultInfo = document.getElementById('resultInfo');
+        const queueInfo = document.getElementById('queueInfo');
         const audioContainer = document.getElementById('audioContainer');
         const audioPlayer = document.getElementById('audioPlayer');
         const loadingSpinner = document.getElementById('loadingSpinner');
@@ -343,18 +465,20 @@
         // Элементы информации
         const serviceStatus = document.getElementById('serviceStatus');
         const modelsCount = document.getElementById('modelsCount');
-        const torchVersion = document.getElementById('torchVersion');
+        const queueSize = document.getElementById('queueSize');
         const uptime = document.getElementById('uptime');
         const voicesList = document.getElementById('voicesList');
         
-        // Текущий job_id
-        let currentJobId = null;
+        // Текущий task_id/job_id
+        let currentTaskId = null;
         let checkStatusInterval = null;
+        let currentAudioUrl = null;
         
         // При загрузке страницы
         document.addEventListener('DOMContentLoaded', function() {
             checkHealth();
             loadVoices();
+            checkQueueStatus();
             
             // Устанавливаем максимальную длину текста
             const textarea = document.getElementById('text');
@@ -362,10 +486,64 @@
                 const maxLength = 5000;
                 if (this.value.length > maxLength) {
                     this.value = this.value.substring(0, maxLength);
-                    alert(`Максимальная длина текста: ${maxLength} символов`);
+                    showAlert(`Максимальная длина текста: ${maxLength} символов`, 'warning');
                 }
             });
+            
+            // Назначаем обработчики кнопок
+            syncBtn.addEventListener('click', generateSync);
+            asyncBtn.addEventListener('click', generateAsync);
         });
+        
+        // Показать уведомление
+        function showAlert(message, type = 'info') {
+            const alertDiv = document.createElement('div');
+            alertDiv.style.cssText = `
+                position: fixed;
+                top: 20px;
+                right: 20px;
+                padding: 15px 20px;
+                border-radius: 8px;
+                color: white;
+                font-weight: 600;
+                z-index: 1000;
+                animation: slideIn 0.3s ease;
+                box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+            `;
+            
+            if (type === 'success') {
+                alertDiv.style.background = 'linear-gradient(135deg, #28a745 0%, #20c997 100%)';
+            } else if (type === 'error') {
+                alertDiv.style.background = 'linear-gradient(135deg, #dc3545 0%, #e4606d 100%)';
+            } else if (type === 'warning') {
+                alertDiv.style.background = 'linear-gradient(135deg, #ffc107 0%, #ffd54f 100%)';
+                alertDiv.style.color = '#333';
+            } else {
+                alertDiv.style.background = 'linear-gradient(135deg, #17a2b8 0%, #20c9b8 100%)';
+            }
+            
+            alertDiv.textContent = message;
+            document.body.appendChild(alertDiv);
+            
+            setTimeout(() => {
+                alertDiv.style.animation = 'slideOut 0.3s ease';
+                setTimeout(() => document.body.removeChild(alertDiv), 300);
+            }, 3000);
+        }
+        
+        // CSS для анимаций уведомлений
+        const style = document.createElement('style');
+        style.textContent = `
+            @keyframes slideIn {
+                from { transform: translateX(100%); opacity: 0; }
+                to { transform: translateX(0); opacity: 1; }
+            }
+            @keyframes slideOut {
+                from { transform: translateX(0); opacity: 1; }
+                to { transform: translateX(100%); opacity: 0; }
+            }
+        `;
+        document.head.appendChild(style);
         
         // Проверка здоровья сервиса
         async function checkHealth() {
@@ -377,7 +555,7 @@
                     serviceStatus.textContent = '✅ Работает';
                     serviceStatus.style.color = '#28a745';
                     modelsCount.textContent = data.models_count || 0;
-                    torchVersion.textContent = data.torch_version || 'N/A';
+                    queueSize.textContent = data.queue_size || 0;
                     uptime.textContent = data.uptime ? data.uptime.split('.')[0] : 'N/A';
                 } else {
                     serviceStatus.textContent = '❌ Ошибка';
@@ -387,6 +565,23 @@
                 serviceStatus.textContent = '❌ Недоступен';
                 serviceStatus.style.color = '#dc3545';
                 console.error('Ошибка проверки здоровья:', error);
+            }
+        }
+        
+        // Проверка статуса очереди
+        async function checkQueueStatus() {
+            try {
+                const response = await fetch('/api/queue-status');
+                const data = await response.json();
+                
+                queueSize.textContent = data.queue_size || 0;
+                
+                // Показываем уведомление если есть задачи в очереди
+                if (data.queue_size > 0) {
+                    showAlert(`В очереди ${data.queue_size} задач`, 'info');
+                }
+            } catch (error) {
+                console.error('Ошибка проверки очереди:', error);
             }
         }
         
@@ -402,11 +597,14 @@
                     data.all_voices.ru.forEach(voice => {
                         const isLoaded = data.loaded_voices?.ru?.some(v => v.id === voice.id) || false;
                         voicesHtml += `
-                            <div style="margin: 5px 0; padding: 5px; background: ${isLoaded ? '#d4edda' : '#f8d7da'}; border-radius: 4px;">
-                                <strong>${voice.name}</strong> (${voice.id})
-                                <span style="float: right; font-size: 0.9em;">
-                                    ${isLoaded ? '✅ Загружен' : '❌ Не загружен'}
-                                </span>
+                            <div style="margin: 8px 0; padding: 10px; background: ${isLoaded ? '#d4edda' : '#f8d7da'}; border-radius: 6px; border-left: 4px solid ${isLoaded ? '#28a745' : '#dc3545'};">
+                                <div style="font-weight: 600;">${voice.name}</div>
+                                <div style="font-size: 0.9em; color: #666;">ID: ${voice.id} • ${voice.description}</div>
+                                <div style="font-size: 0.8em; margin-top: 5px; text-align: right;">
+                                    <span style="background: ${isLoaded ? '#28a745' : '#dc3545'}; color: white; padding: 2px 8px; border-radius: 10px;">
+                                        ${isLoaded ? '✅ Загружен' : '❌ Не загружен'}
+                                    </span>
+                                </div>
                             </div>
                         `;
                     });
@@ -414,37 +612,132 @@
                 
                 voicesList.innerHTML = voicesHtml;
             } catch (error) {
-                voicesList.innerHTML = '<div style="color: #dc3545;">Ошибка загрузки голосов</div>';
+                voicesList.innerHTML = '<div style="color: #dc3545; padding: 10px; text-align: center;">Ошибка загрузки голосов</div>';
                 console.error('Ошибка загрузки голосов:', error);
             }
         }
         
-        // Обработка формы генерации
-        ttsForm.addEventListener('submit', async function(e) {
-            e.preventDefault();
-            
+        // Синхронная генерация
+        async function generateSync() {
             const text = document.getElementById('text').value;
             const language = document.getElementById('language').value;
             const speaker = document.getElementById('speaker').value;
             
             if (!text.trim()) {
-                alert('Пожалуйста, введите текст для озвучки');
+                showAlert('Пожалуйста, введите текст для озвучки', 'warning');
                 return;
             }
             
+            if (text.length > 2000) {
+                if (!confirm('Текст довольно длинный. Рекомендуется использовать асинхронный режим. Продолжить в синхронном режиме?')) {
+                    return;
+                }
+            }
+            
             // Показываем результат контейнер
+            resetResultContainer();
             resultContainer.classList.remove('hidden');
             audioContainer.classList.add('hidden');
             loadingSpinner.classList.remove('hidden');
             
             // Обновляем статус
-            statusDiv.textContent = 'Отправка запроса...';
-            statusDiv.className = 'status queued';
+            statusDiv.innerHTML = '<span>⚡ Синхронная генерация...</span><span class="sync-indicator">СИНХРОННО</span>';
+            statusDiv.className = 'status processing';
             resultInfo.textContent = '';
             
-            // Блокируем кнопку
-            generateBtn.disabled = true;
-            generateBtn.textContent = '⏳ Обработка...';
+            // Блокируем кнопки
+            syncBtn.disabled = true;
+            asyncBtn.disabled = true;
+            syncBtn.textContent = '⏳ Генерация...';
+            
+            try {
+                const response = await fetch('/api/tts-sync', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        text: text,
+                        language: language,
+                        speaker: speaker,
+                        sample_rate: 16000
+                    })
+                });
+                
+                if (response.status === 200) {
+                    // Получаем аудио файл
+                    const audioBlob = await response.blob();
+                    
+                    // Освобождаем предыдущий URL если есть
+                    if (currentAudioUrl) {
+                        URL.revokeObjectURL(currentAudioUrl);
+                    }
+                    
+                    currentAudioUrl = URL.createObjectURL(audioBlob);
+                    currentTaskId = `sync_${Date.now()}`;
+                    
+                    audioPlayer.src = currentAudioUrl;
+                    audioContainer.classList.remove('hidden');
+                    loadingSpinner.classList.add('hidden');
+                    
+                    statusDiv.innerHTML = '<span>✅ Аудио готово!</span><span class="sync-indicator">СИНХРОННО</span>';
+                    statusDiv.className = 'status success';
+                    resultInfo.textContent = 'Аудио успешно сгенерировано. Нажмите кнопку воспроизведения или скачайте файл.';
+                    
+                    // Автоматическое воспроизведение
+                    setTimeout(() => {
+                        audioPlayer.play().catch(e => {
+                            console.log('Автовоспроизведение отключено или произошла ошибка:', e);
+                        });
+                    }, 500);
+                    
+                    showAlert('Аудио успешно сгенерировано!', 'success');
+                    
+                } else {
+                    const errorData = await response.json();
+                    throw new Error(errorData.error || `Ошибка сервера: ${response.status}`);
+                }
+            } catch (error) {
+                statusDiv.innerHTML = '<span>❌ Ошибка генерации</span><span class="sync-indicator">СИНХРОННО</span>';
+                statusDiv.className = 'status error';
+                resultInfo.textContent = error.message;
+                loadingSpinner.classList.add('hidden');
+                showAlert(`Ошибка синхронной генерации: ${error.message}`, 'error');
+            } finally {
+                // Разблокируем кнопки
+                syncBtn.disabled = false;
+                asyncBtn.disabled = false;
+                syncBtn.textContent = '⚡ Синхронная генерация';
+            }
+        }
+        
+        // Асинхронная генерация
+        async function generateAsync() {
+            const text = document.getElementById('text').value;
+            const language = document.getElementById('language').value;
+            const speaker = document.getElementById('speaker').value;
+            
+            if (!text.trim()) {
+                showAlert('Пожалуйста, введите текст для озвучки', 'warning');
+                return;
+            }
+            
+            // Показываем результат контейнер
+            resetResultContainer();
+            resultContainer.classList.remove('hidden');
+            audioContainer.classList.add('hidden');
+            loadingSpinner.classList.remove('hidden');
+            
+            // Обновляем статус
+            statusDiv.innerHTML = '<span>⏳ Отправка задачи...</span><span class="async-indicator">АСИНХРОННО</span>';
+            statusDiv.className = 'status queued';
+            resultInfo.textContent = '';
+            queueInfo.classList.remove('hidden');
+            
+            // Блокируем кнопки
+            syncBtn.disabled = true;
+            asyncBtn.disabled = true;
+            asyncBtn.textContent = '⏳ Отправка...';
             
             try {
                 const response = await fetch('/api/tts', {
@@ -463,24 +756,65 @@
                 const data = await response.json();
                 
                 if (response.status === 202) {
-                    statusDiv.textContent = 'Задача в очереди';
-                    statusDiv.className = 'status queued';
-                    resultInfo.textContent = `Job ID: ${data.job_id}`;
+                    statusDiv.innerHTML = '<span>📋 Задача в очереди</span><span class="async-indicator">АСИНХРОННО</span>';
+                    resultInfo.textContent = `Task ID: ${data.task_id}`;
                     
-                    currentJobId = data.job_id;
+                    currentTaskId = data.task_id;
+                    updateQueueInfo(data.queue_position, data.estimated_time);
+                    
+                    showAlert(`Задача добавлена в очередь. Позиция: ${data.queue_position || 1}`, 'info');
                     startCheckingStatus();
+                    
                 } else {
                     throw new Error(data.error || 'Неизвестная ошибка');
                 }
             } catch (error) {
-                statusDiv.textContent = 'Ошибка отправки';
+                statusDiv.innerHTML = '<span>❌ Ошибка отправки</span><span class="async-indicator">АСИНХРОННО</span>';
                 statusDiv.className = 'status error';
                 resultInfo.textContent = error.message;
                 loadingSpinner.classList.add('hidden');
-                generateBtn.disabled = false;
-                generateBtn.textContent = '🎵 Сгенерировать речь';
+                queueInfo.classList.add('hidden');
+                showAlert(`Ошибка асинхронной генерации: ${error.message}`, 'error');
+                
+                // Разблокируем кнопки
+                syncBtn.disabled = false;
+                asyncBtn.disabled = false;
+                asyncBtn.textContent = '🔄 Асинхронная генерация';
             }
-        });
+        }
+        
+        // Обновление информации об очереди
+        function updateQueueInfo(position, estimatedTime) {
+            queueInfo.innerHTML = `
+                <div style="display: flex; justify-content: space-between; align-items: center;">
+                    <div>
+                        <strong>Позиция в очереди:</strong> ${position || 'N/A'}
+                    </div>
+                    <div>
+                        <strong>Ожидаемое время:</strong> ${estimatedTime || '5-30 секунд'}
+                    </div>
+                </div>
+                <div style="margin-top: 10px; font-size: 0.85em; color: #666;">
+                    Задача обрабатывается в фоновом режиме. Вы можете продолжать использовать сервис.
+                </div>
+            `;
+        }
+        
+        // Сброс контейнера результатов
+        function resetResultContainer() {
+            if (checkStatusInterval) {
+                clearInterval(checkStatusInterval);
+                checkStatusInterval = null;
+            }
+            
+            if (currentAudioUrl) {
+                URL.revokeObjectURL(currentAudioUrl);
+                currentAudioUrl = null;
+            }
+            
+            audioPlayer.src = '';
+            currentTaskId = null;
+        }
         
         // Начинаем проверку статуса задачи
         function startCheckingStatus() {
@@ -490,26 +824,36 @@
             
             checkStatusInterval = setInterval(async () => {
                 try {
-                    const response = await fetch(`/api/status/${currentJobId}`);
+                    const response = await fetch(`/api/status/${currentTaskId}`);
                     
                     if (response.status === 200) {
                         // Задача завершена, получаем аудио
                         const audioBlob = await response.blob();
-                        const audioUrl = URL.createObjectURL(audioBlob);
                         
-                        audioPlayer.src = audioUrl;
+                        // Освобождаем предыдущий URL если есть
+                        if (currentAudioUrl) {
+                            URL.revokeObjectURL(currentAudioUrl);
+                        }
+                        
+                        currentAudioUrl = URL.createObjectURL(audioBlob);
+                        audioPlayer.src = currentAudioUrl;
                         audioContainer.classList.remove('hidden');
                         loadingSpinner.classList.add('hidden');
+                        queueInfo.classList.add('hidden');
                         
-                        statusDiv.textContent = 'Аудио готово!';
+                        statusDiv.innerHTML = '<span>✅ Аудио готово!</span><span class="async-indicator">АСИНХРОННО</span>';
                         statusDiv.className = 'status success';
-                        resultInfo.textContent = 'Нажмите кнопку воспроизведения или скачайте файл';
+                        resultInfo.textContent = 'Аудио успешно сгенерировано в фоновом режиме.';
                         
-                        // Разблокируем кнопку
-                        generateBtn.disabled = false;
-                        generateBtn.textContent = '🎵 Сгенерировать речь';
+                        // Разблокируем кнопки
+                        syncBtn.disabled = false;
+                        asyncBtn.disabled = false;
+                        asyncBtn.textContent = '🔄 Асинхронная генерация';
                         
                         clearInterval(checkStatusInterval);
+                        checkQueueStatus();
+                        showAlert('Асинхронная генерация завершена!', 'success');
+                        
                     } else if (response.status === 500) {
                         // Ошибка задачи
                         const errorData = await response.json();
@@ -517,29 +861,41 @@
                     } else {
                         // Задача еще выполняется
                         const statusData = await response.json();
-                        statusDiv.textContent = `Статус: ${statusData.status}`;
-                        if (statusData.position) {
-                            resultInfo.textContent = `Позиция в очереди: ${statusData.position}`;
+                        
+                        statusDiv.innerHTML = `<span>🔄 ${statusData.status}</span><span class="async-indicator">АСИНХРОННО</span>`;
+                        
+                        if (statusData.queue_position) {
+                            updateQueueInfo(statusData.queue_position, 'обрабатывается...');
                         }
                     }
                 } catch (error) {
-                    statusDiv.textContent = 'Ошибка генерации';
+                    statusDiv.innerHTML = '<span>❌ Ошибка генерации</span><span class="async-indicator">АСИНХРОННО</span>';
                     statusDiv.className = 'status error';
                     resultInfo.textContent = error.message;
                     loadingSpinner.classList.add('hidden');
-                    generateBtn.disabled = false;
-                    generateBtn.textContent = '🎵 Сгенерировать речь';
+                    queueInfo.classList.add('hidden');
+                    
+                    // Разблокируем кнопки
+                    syncBtn.disabled = false;
+                    asyncBtn.disabled = false;
+                    asyncBtn.textContent = '🔄 Асинхронная генерация';
                     
                     clearInterval(checkStatusInterval);
+                    showAlert(`Ошибка асинхронной генерации: ${error.message}`, 'error');
                 }
-            }, 2000); // Проверяем каждые 2 секунды
+            }, 3000); // Проверяем каждые 3 секунды
         }
         
         // Воспроизведение аудио
         function playAudio() {
+            if (!audioPlayer.src) {
+                showAlert('Аудио не загружено', 'warning');
+                return;
+            }
+            
             audioPlayer.play().catch(e => {
                 console.error('Ошибка воспроизведения:', e);
-                alert('Ошибка воспроизведения аудио');
+                showAlert('Ошибка воспроизведения аудио. Попробуйте скачать файл.', 'error');
             });
         }
         
@@ -551,34 +907,93 @@
         
         // Скачивание аудио
         function downloadAudio() {
-            if (!audioPlayer.src) return;
+            if (!audioPlayer.src) {
+                showAlert('Аудио не загружено', 'warning');
+                return;
+            }
             
             const a = document.createElement('a');
             a.href = audioPlayer.src;
-            a.download = `tts_${currentJobId || Date.now()}.wav`;
+            a.download = `tts_${currentTaskId || 'audio'}_${Date.now()}.wav`;
             document.body.appendChild(a);
             a.click();
             document.body.removeChild(a);
+            showAlert('Аудио скачивается...', 'success');
         }
         
-        // Тестовый запрос
+        // Тест синхронной генерации
+        async function testSyncGeneration() {
+            try {
+                showAlert('Запуск теста синхронной генерации...', 'info');
+                
+                const response = await fetch('/api/test-generate');
+                const data = await response.json();
+                
+                if (data.success) {
+                    showAlert(`✅ Тест пройден! Файл: ${data.filename}, Размер: ${data.file_size_kb} KB`, 'success');
+                } else {
+                    showAlert(`❌ Тест не пройден: ${data.error}`, 'error');
+                }
+            } catch (error) {
+                showAlert(`❌ Ошибка теста: ${error.message}`, 'error');
+            }
+        }
+        
+        // Тест асинхронной генерации
+        async function testAsyncGeneration() {
+            try {
+                showAlert('Запуск теста асинхронной генерации...', 'info');
+                
+                const response = await fetch('/api/test');
+                const data = await response.json();
+                
+                if (data.success) {
+                    showAlert(`✅ Тест API пройден! Тип: ${data.result_type}, Аудио: ${data.audio_shape}`, 'success');
+                } else {
+                    showAlert(`❌ Тест не пройден: ${data.error}`, 'error');
+                }
+            } catch (error) {
+                showAlert(`❌ Ошибка теста: ${error.message}`, 'error');
+            }
+        }
+        
+        // Общий тест API
         async function runTest() {
             try {
                 const response = await fetch('/api/test');
                 const data = await response.json();
                 
                 if (data.success) {
-                    alert(`✅ Тест пройден успешно!\nТип результата: ${data.result_type}\nФормат аудио: ${data.audio_shape}`);
+                    showAlert(`✅ Тест пройден успешно!\nТип: ${data.result_type}\nАудио: ${data.audio_shape}`, 'success');
                 } else {
-                    alert(`❌ Тест не пройден: ${data.error}`);
+                    showAlert(`❌ Тест не пройден: ${data.error}`, 'error');
                 }
             } catch (error) {
-                alert(`❌ Ошибка теста: ${error.message}`);
+                showAlert(`❌ Ошибка теста: ${error.message}`, 'error');
+            }
+        }
+        
+        // Очистка кэша результатов
+        async function clearResultsCache() {
+            try {
+                showAlert('Очистка кэша...', 'info');
+                
+                // Здесь можно добавить вызов API для очистки кэша если он будет реализован
+                // Пока просто перезагружаем страницу
+                setTimeout(() => {
+                    location.reload();
+                }, 1000);
+                
+            } catch (error) {
+                showAlert(`Ошибка очистки кэша: ${error.message}`, 'error');
             }
         }
         
         // Обновление информации каждые 30 секунд
-        setInterval(checkHealth, 30000);
+        setInterval(() => {
+            checkHealth();
+            checkQueueStatus();
+        }, 30000);
     </script>
 </body>
 </html>
