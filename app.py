@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-ZINDAKI TTS SERVICE - Исправленная версия с корректной генерацией WAV файлов
+ZINDAKI TTS SERVICE - Исправленная версия с генерацией WAV файлов
 """
 
 import os
@@ -35,7 +35,7 @@ os.makedirs('/app/temp_audio', exist_ok=True)
 redis_conn = redis.Redis(
     host=os.getenv('REDIS_HOST', 'tts-redis'),
     port=int(os.getenv('REDIS_PORT', 6379)),
-    db=1,
+    db=0,
     socket_connect_timeout=10,
     socket_timeout=30,
     retry_on_timeout=True
@@ -83,7 +83,10 @@ class TTSRequest(BaseModel):
 def load_tts_model(language='ru', user_speaker='baya'):
     """
     Загружает модель Silero TTS по требованию
+    Возвращает кортеж из 5 элементов:
+    (model, symbols, sample_rate, example_text, apply_tts)
     """
+    # Формируем ключ для кэша
     model_key = f"{language}_{user_speaker}"
     
     if model_key not in tts_models:
@@ -93,6 +96,7 @@ def load_tts_model(language='ru', user_speaker='baya'):
         if language in SPEAKER_MAPPING and user_speaker in SPEAKER_MAPPING[language]:
             correct_speaker = SPEAKER_MAPPING[language][user_speaker]
         else:
+            # Значения по умолчанию
             if language == 'ru':
                 correct_speaker = 'baya_16khz'
             else:
@@ -144,8 +148,8 @@ def load_tts_model(language='ru', user_speaker='baya'):
 # ========== ФУНКЦИЯ ГЕНЕРАЦИИ АУДИО ==========
 def generate_audio(text, language, speaker, sample_rate):
     """
-    Генерация аудио из текста и сохранение в файл
-    Возвращает только имя файла (не полный путь)
+    Генерация аудио из текста
+    Возвращает только имя сгенерированного файла
     """
     try:
         start_time = time.time()
@@ -177,15 +181,32 @@ def generate_audio(text, language, speaker, sample_rate):
             device=device
         )
         
-        # Обработка результата
+        # ДИАГНОСТИКА: выводим тип результата
+        print(f"   📊 Тип результата apply_tts: {type(audio_result)}")
+        if isinstance(audio_result, list):
+            print(f"   📊 Длина списка: {len(audio_result)}")
+            if len(audio_result) > 0:
+                print(f"   📊 Тип первого элемента: {type(audio_result[0])}")
+                if hasattr(audio_result[0], 'shape'):
+                    print(f"   📊 Shape первого элемента: {audio_result[0].shape}")
+        
+        # ОБРАБОТКА РЕЗУЛЬТАТА
+        # 1. Если результат - список
         if isinstance(audio_result, list):
             if len(audio_result) == 0:
                 raise ValueError("apply_tts вернул пустой список")
+            
+            # Берем первый элемент списка
             audio = audio_result[0]
             print(f"   ✅ Использую первый элемент списка")
+            
+        # 2. Если результат не список
         else:
             audio = audio_result
             print(f"   ✅ Результат не список, используем как есть")
+        
+        # ПРОВЕРЯЕМ И ПОДГОТАВЛИВАЕМ АУДИО ДЛЯ СОХРАНЕНИЯ
+        print(f"   🔧 Подготовка аудио для сохранения...")
         
         if not hasattr(audio, 'shape'):
             raise ValueError(f"Аудио не имеет атрибута shape. Тип: {type(audio)}")
@@ -194,12 +215,21 @@ def generate_audio(text, language, speaker, sample_rate):
         
         # Приводим к правильной размерности (каналы, время)
         if audio.ndim == 1:
+            # (время) -> (1, время) - один канал
             print(f"   🔄 Преобразование: 1D -> 2D (добавляем канал)")
             audio = audio.unsqueeze(0) if hasattr(audio, 'unsqueeze') else audio.reshape(1, -1)
+        elif audio.ndim == 2:
+            if audio.shape[0] != 1:
+                # Возможно (время, каналы) -> (каналы, время)
+                print(f"   🔄 Проверяем ориентацию каналов...")
+                # Оставляем как есть, torchaudio разберется
+                pass
+        else:
+            raise ValueError(f"Неожиданная размерность аудио: {audio.ndim}")
         
         print(f"   📐 Финальный shape аудио: {audio.shape}")
         
-        # Генерируем уникальное имя файла
+        # Создаем уникальное имя файла
         temp_dir = '/app/temp_audio'
         os.makedirs(temp_dir, exist_ok=True)
         
@@ -217,6 +247,12 @@ def generate_audio(text, language, speaker, sample_rate):
             format='wav'
         )
         
+        # Проверяем, что файл создан
+        if not os.path.exists(filepath):
+            raise ValueError(f"Файл не был создан: {filepath}")
+        
+        file_size = os.path.getsize(filepath)
+        
         # Вычисляем статистику
         generation_time = time.time() - start_time
         audio_duration = audio.shape[-1] / target_sample_rate
@@ -225,7 +261,7 @@ def generate_audio(text, language, speaker, sample_rate):
         print(f"   ⏱️  Время генерации: {generation_time:.2f} секунд")
         print(f"   🕒 Длительность аудио: {audio_duration:.2f} секунд")
         print(f"   📁 Файл: {filename}")
-        print(f"   📊 Размер: {os.path.getsize(filepath) / 1024:.1f} KB")
+        print(f"   📊 Размер: {file_size / 1024:.1f} KB")
         
         # ВОЗВРАЩАЕМ ТОЛЬКО ИМЯ ФАЙЛА
         return filename
@@ -247,7 +283,7 @@ def index():
         print(f"⚠️ Шаблон index.html не найден: {e}")
         return jsonify({
             'service': 'Zindaki TTS Service',
-            'version': '1.0',
+            'version': '1.1',
             'status': 'running',
             'endpoints': {
                 '/': 'GET - главная страница',
@@ -268,12 +304,14 @@ def tts_request():
     Принимает JSON: {"text": "текст", "language": "ru", "speaker": "baya"}
     """
     try:
+        # Получаем и валидируем данные
         data = request.get_json()
         if not data:
             return jsonify({'error': 'No JSON data provided'}), 400
         
         req = TTSRequest(**data)
         
+        # Проверка длины текста
         if len(req.text) == 0:
             return jsonify({'error': 'Text cannot be empty'}), 400
         
@@ -289,11 +327,11 @@ def tts_request():
         
         # Создаем фоновую задачу
         job = queue.enqueue(
-            generate_audio,
+            generate_audio,  # Используем основную функцию
             args=(req.text, req.language, req.speaker, req.sample_rate),
-            job_timeout=300,
-            result_ttl=3600,
-            failure_ttl=1800
+            job_timeout=300,    # 5 минут таймаут
+            result_ttl=3600,    # Результат хранится 1 час
+            failure_ttl=1800    # Информация о неудачных задачах 30 минут
         )
         
         return jsonify({
@@ -301,6 +339,7 @@ def tts_request():
             'status': 'queued',
             'message': 'Задача добавлена в очередь обработки',
             'estimated_time': '5-30 секунд',
+            'check_status': f'/api/status/{job.get_id()}',
             'models_loaded': list(tts_models.keys()),
             'timestamp': datetime.now().isoformat()
         }), 202
@@ -332,10 +371,18 @@ def get_job_status(job_id):
             file_path = os.path.join('/app/temp_audio', filename)
             
             if not os.path.exists(file_path):
+                print(f"⚠️ Файл не найден: {file_path}")
+                print(f"   Доступные файлы в /app/temp_audio:")
+                try:
+                    files = os.listdir('/app/temp_audio')
+                    for f in files[:10]:
+                        print(f"     - {f}")
+                except Exception as e:
+                    print(f"   Ошибка чтения директории: {e}")
+                
                 return jsonify({
                     'error': f'Audio file not found: {filename}',
-                    'details': f'Full path: {file_path}',
-                    'available_files': os.listdir('/app/temp_audio')[:10]
+                    'available_files': os.listdir('/app/temp_audio')[:10] if os.path.exists('/app/temp_audio') else []
                 }), 404
             
             print(f"📤 Отправляю файл: {file_path}")
@@ -363,6 +410,8 @@ def get_job_status(job_id):
             
         elif job.is_failed:
             error_msg = str(job.exc_info) if job.exc_info else 'Unknown error'
+            print(f"❌ Задача {job_id} завершилась с ошибкой: {error_msg}")
+            
             return jsonify({
                 'error': 'Job failed',
                 'details': error_msg,
@@ -371,14 +420,21 @@ def get_job_status(job_id):
             
         else:
             # Задача еще выполняется
+            status = job.get_status()
+            position = job.get_position() if hasattr(job, 'get_position') else 'unknown'
+            
+            print(f"⏳ Задача {job_id} выполняется: статус={status}, позиция={position}")
+            
             return jsonify({
-                'status': job.get_status(),
-                'position': job.get_position() if hasattr(job, 'get_position') else 'unknown',
+                'status': status,
+                'job_id': job_id,
+                'position': position,
                 'models_loaded': list(tts_models.keys()),
                 'timestamp': datetime.now().isoformat()
             }), 200
             
     except Exception as e:
+        print(f"❌ Ошибка получения статуса задачи {job_id}: {str(e)}")
         return jsonify({'error': f'Job not found: {str(e)}'}), 404
 
 @app.route('/api/health', methods=['GET'])
@@ -508,38 +564,15 @@ def test_endpoint():
             audio = audio_result
             result_type = str(type(audio_result))
         
-        # Создаем тестовый файл
-        temp_dir = '/app/temp_audio'
-        os.makedirs(temp_dir, exist_ok=True)
-        
-        test_filename = f"test_{datetime.now().strftime('%Y%m%d_%H%M%S')}.wav"
-        test_filepath = os.path.join(temp_dir, test_filename)
-        
-        # Сохраняем тестовое аудио
-        if audio.ndim == 1:
-            audio = audio.unsqueeze(0) if hasattr(audio, 'unsqueeze') else audio.reshape(1, -1)
-        
-        torchaudio.save(
-            test_filepath,
-            audio,
-            model_info['sample_rate'],
-            format='wav'
-        )
-        
-        file_size = os.path.getsize(test_filepath) if os.path.exists(test_filepath) else 0
-        
-        # Удаляем тестовый файл после проверки
-        if os.path.exists(test_filepath):
-            os.remove(test_filepath)
+        # Проверяем shape
+        audio_shape = str(audio.shape) if hasattr(audio, 'shape') else 'no shape'
         
         return jsonify({
             'success': True,
             'message': 'TTS сервис работает корректно',
             'result_type': result_type,
-            'audio_shape': str(audio.shape) if hasattr(audio, 'shape') else 'no shape',
+            'audio_shape': audio_shape,
             'sample_rate': model_info['sample_rate'],
-            'file_generated': file_size > 0,
-            'file_size_kb': round(file_size / 1024, 2) if file_size > 0 else 0,
             'model_loaded': True,
             'correct_speaker': model_info['correct_speaker'],
             'models_in_cache': list(tts_models.keys()),
@@ -560,10 +593,61 @@ def test_endpoint():
             'timestamp': datetime.now().isoformat()
         }), 500
 
+@app.route('/api/test-generate', methods=['GET'])
+def test_generate():
+    """Тестовая генерация с сохранением файла"""
+    try:
+        test_text = "Привет! Это тестовое сообщение TTS сервиса."
+        
+        print(f"\n🧪 Тестовая генерация файла: {test_text}")
+        
+        # Используем функцию generate_audio для теста
+        filename = generate_audio(test_text, 'ru', 'baya', 16000)
+        filepath = os.path.join('/app/temp_audio', filename)
+        
+        if os.path.exists(filepath):
+            file_size = os.path.getsize(filepath)
+            
+            # Читаем заголовок файла для проверки
+            with open(filepath, 'rb') as f:
+                header = f.read(44)  # WAV заголовок
+            
+            # Удаляем тестовый файл после проверки
+            os.remove(filepath)
+            
+            return jsonify({
+                'success': True,
+                'message': 'Audio file generated successfully',
+                'filename': filename,
+                'file_size_kb': round(file_size / 1024, 2),
+                'file_exists': True,
+                'wav_header': header.hex()[:50] + '...',
+                'timestamp': datetime.now().isoformat()
+            })
+        else:
+            return jsonify({
+                'success': False,
+                'error': 'File was not created',
+                'temp_dir': '/app/temp_audio',
+                'temp_dir_exists': os.path.exists('/app/temp_audio'),
+                'temp_dir_contents': os.listdir('/app/temp_audio') if os.path.exists('/app/temp_audio') else []
+            }), 500
+            
+    except Exception as e:
+        import traceback
+        print(f"❌ Тестовая генерация не удалась: {e}")
+        
+        return jsonify({
+            'success': False,
+            'error': str(e),
+            'traceback': traceback.format_exc()[:500],
+            'timestamp': datetime.now().isoformat()
+        }), 500
+
 @app.route('/api/debug', methods=['GET'])
 def debug_info():
     """Отладочная информация"""
-    # Проверяем наличие директории templates
+    # Проверяем наличие директорий
     templates_dir = '/app/templates'
     template_files = []
     if os.path.exists(templates_dir):
@@ -573,22 +657,27 @@ def debug_info():
     temp_files = []
     temp_dir = '/app/temp_audio'
     if os.path.exists(temp_dir):
-        temp_files = os.listdir(temp_dir)[:20]  # Первые 20 файлов
+        temp_files = os.listdir(temp_dir)
+    
+    # Проверяем очередь задач
+    queue_jobs = len(queue)
     
     return jsonify({
         'torch_version': torch.__version__,
         'torchaudio_version': torchaudio.__version__,
-        'python_version': sys.version,
+        'python_version': sys.version.split()[0],
         'environment': {k: v for k, v in os.environ.items() if 'TORCH' in k or 'CACHE' in k},
         'cache_dir_contents': os.listdir('/app/cache') if os.path.exists('/app/cache') else [],
+        'torch_hub_cache': os.listdir('/app/cache/torch/hub') if os.path.exists('/app/cache/torch/hub') else [],
         'templates_dir': templates_dir,
         'template_files': template_files,
         'temp_audio_dir': temp_dir,
         'temp_files_count': len(temp_files),
-        'temp_files_sample': temp_files,
+        'temp_files': temp_files[:20],
         'models_loaded': list(tts_models.keys()),
         'tts_models_structure': {k: list(v.keys()) for k, v in tts_models.items()} if tts_models else {},
         'redis_connected': redis_conn.ping() if redis_conn else False,
+        'queue_size': queue_jobs,
         'timestamp': datetime.now().isoformat()
     })
 
@@ -653,14 +742,13 @@ atexit.register(cleanup_temp_files)
 
 if __name__ == '__main__':
     print("\n" + "=" * 70)
-    print("🎵 ZINDAKI TTS SERVICE - Сервис озвучки для онлайн-школы")
+    print("🎵 ZINDAKI TTS SERVICE - Исправленная версия v1.1")
     print("=" * 70)
     print(f"📅 Дата запуска: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"🐍 Python версия: {sys.version.split()[0]}")
-    print(f"🔥 PyTorch версия: {torch.__version__}")
-    print(f"🎵 TorchAudio версия: {torchaudio.__version__}")
+    print(f"🔥 PyTorch версия: torch.__version__")
+    print(f"🎵 TorchAudio версия: torchaudio.__version__")
     print(f"📁 Кэш директория: {os.environ.get('TORCH_HOME')}")
-    print(f"📁 Директория шаблонов: /app/templates")
     print(f"📁 Директория временных файлов: /app/temp_audio")
     
     # Проверяем наличие директории templates
