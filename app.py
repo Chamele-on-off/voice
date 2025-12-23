@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """
-ZINDAKI TTS SERVICE - Версия для старого API Silero
-Очень старая версия без именованных параметров в apply_tts
+ZINDAKI TTS SERVICE - Возвращаем рабочий код с исправлением API
 """
 
 import os
@@ -52,25 +51,13 @@ CORS(app, resources={r"/*": {"origins": "*"}})
 # ========== ГЛОБАЛЬНЫЕ ПЕРЕМЕННЫЕ ==========
 tts_model = None
 tts_symbols = None
-tts_sample_rate = None
-tts_example_text = None
-tts_apply_tts = None
+tts_sample_rate = 16000
+tts_example_text = ""
 startup_time = datetime.now()
 model_loaded = False
 
-# ========== КОНФИГУРАЦИЯ SILERO TTS ==========
-# Для старого API, который возвращает 5 элементов
-SILERO_CONFIG = {
-    'ru': {
-        'speakers': ['aidar', 'baya', 'kseniya', 'irina', 'natasha', 'ruslan'],
-        'sample_rate': 16000,
-        'model_name': 'ru'  # Самая старая версия
-    }
-}
-
 # ========== МОДЕЛЬ ЗАПРОСА ==========
 class TTSRequest(BaseModel):
-    """Валидация входящих запросов"""
     text: str
     language: str = 'ru'
     speaker: str = 'baya'
@@ -81,127 +68,104 @@ class TTSRequest(BaseModel):
 
 # ========== ФУНКЦИЯ ЗАГРУЗКИ МОДЕЛИ ==========
 def load_tts_model():
-    """Загружает модель Silero TTS (старое API с 5 элементами)"""
-    global tts_model, tts_symbols, tts_sample_rate, tts_example_text, tts_apply_tts, model_loaded
+    """Загружает модель Silero TTS"""
+    global tts_model, tts_symbols, tts_sample_rate, tts_example_text, model_loaded
     
     if tts_model is None:
-        print(f"📥 Загружаю модель Silero TTS (старое API)...")
+        print(f"📥 Загружаю модель Silero TTS...")
         
         try:
             # Устанавливаем директорию кэша
             torch.hub.set_dir('/app/cache/torch/hub')
             
-            # Пробуем самые старые версии
-            speaker_versions = ['baya', 'aidar', 'kseniya', 'ru']
+            # ЗАГРУЖАЕМ ТО, ЧТО РАБОТАЛО РАНЬШЕ
+            # В логах было: Downloading... 100.0% - значит модель скачивалась
+            (tts_model, 
+             tts_symbols, 
+             tts_sample_rate, 
+             tts_example_text, 
+             tts_apply_tts) = torch.hub.load(
+                repo_or_dir='snakers4/silero-models',
+                model='silero_tts',
+                language='ru',
+                speaker='baya',  # ИЛИ 'aidar', или другая рабочая версия
+                force_reload=False,
+                trust_repo=True,
+                verbose=False
+            )
             
-            for speaker_version in speaker_versions:
-                try:
-                    print(f"   Пробую голос/версию: {speaker_version}")
-                    
-                    # СТАРОЕ API: возвращает 5 элементов!
-                    (tts_model, 
-                     tts_symbols, 
-                     tts_sample_rate, 
-                     tts_example_text, 
-                     tts_apply_tts) = torch.hub.load(
-                        repo_or_dir='snakers4/silero-models',
-                        model='silero_tts',
-                        language='ru',
-                        speaker=speaker_version,
-                        force_reload=False,
-                        trust_repo=True,
-                        verbose=False
-                    )
-                    
-                    print(f"✅ Модель успешно загружена")
-                    print(f"   Sample rate: {tts_sample_rate}")
-                    print(f"   Пример текста: {tts_example_text[:50]}...")
-                    model_loaded = True
-                    break
-                    
-                except ValueError as e:
-                    # Ошибка распаковки (ожидали 5, получили 2)
-                    print(f"   ❌ {speaker_version}: ошибка распаковки - {str(e)[:80]}")
-                    # Пробуем новый API с 2 элементами
-                    try:
-                        tts_model, tts_example_text = torch.hub.load(
-                            repo_or_dir='snakers4/silero-models',
-                            model='silero_tts',
-                            language='ru',
-                            speaker=speaker_version,
-                            force_reload=False,
-                            trust_repo=True,
-                            verbose=False
-                        )
-                        print(f"   ✅ Загружено 2 элемента (новый API)")
-                        model_loaded = True
-                        break
-                    except Exception as e2:
-                        print(f"   ❌ И новый API не сработал: {str(e2)[:80]}")
-                        continue
-                except Exception as e:
-                    print(f"   ❌ {speaker_version}: {str(e)[:80]}")
-                    continue
+            print(f"✅ Модель успешно загружена")
+            print(f"   Sample rate: {tts_sample_rate}")
+            print(f"   Пример текста: {tts_example_text[:50]}...")
+            model_loaded = True
             
-            if not model_loaded:
-                raise ValueError("Не удалось загрузить модель ни в одном формате")
-                
-            # Тестируем вызов apply_tts
+            # ТЕСТИРУЕМ ВЫЗОВ - КЛЮЧЕВОЕ ИСПРАВЛЕНИЕ!
             print(f"   🔍 Тестирую вызов apply_tts...")
             
-            # Вариант 1: Старый синтаксис (без именованных параметров)
+            # ВАЖНО: Эта версия модели НЕ принимает именованные параметры!
+            # Нужно использовать ПОЗИЦИОННЫЕ аргументы
             try:
-                # В самом старом API apply_tts принимает позиционные аргументы:
-                # apply_tts(texts, model, sample_rate, symbols, device)
-                audio = tts_apply_tts(
-                    texts=["Тест"],
-                    model=tts_model,
-                    sample_rate=tts_sample_rate if tts_sample_rate else 16000,
-                    symbols=tts_symbols if tts_symbols else None,
-                    device=torch.device('cpu')
+                # Позиционные аргументы: (texts, model, sample_rate, symbols, device)
+                test_audio = tts_apply_tts(
+                    ["Тест"],  # texts - список!
+                    tts_model,  # model
+                    tts_sample_rate,  # sample_rate
+                    tts_symbols,  # symbols
+                    torch.device('cpu')  # device
                 )
-                print(f"   ✅ apply_tts работает с именованными параметрами")
-                api_type = 'named_params'
+                print(f"   ✅ apply_tts работает с позиционными аргументами")
+                app.config['API_TYPE'] = 'positional'
                 
-            except TypeError as e:
-                print(f"   ⚠️ Именованные параметры не работают: {str(e)[:80]}")
-                # Вариант 2: Позиционные аргументы
+            except Exception as e:
+                print(f"   ⚠️ Ошибка: {str(e)[:100]}")
+                # Пробуем другой вариант
                 try:
-                    audio = tts_apply_tts(
-                        ["Тест"],           # texts
-                        tts_model,          # model  
-                        tts_sample_rate if tts_sample_rate else 16000,  # sample_rate
-                        tts_symbols if tts_symbols else None,  # symbols
-                        torch.device('cpu') # device
+                    test_audio = tts_apply_tts(
+                        texts=["Тест"],
+                        model=tts_model,
+                        sample_rate=tts_sample_rate,
+                        symbols=tts_symbols,
+                        device=torch.device('cpu')
                     )
-                    print(f"   ✅ apply_tts работает с позиционными параметрами")
-                    api_type = 'positional_params'
-                    
+                    print(f"   ✅ apply_tts работает с именованными аргументами")
+                    app.config['API_TYPE'] = 'named'
                 except Exception as e2:
-                    print(f"   ❌ Позиционные параметры тоже не работают: {str(e2)[:80]}")
-                    # Вариант 3: Возможно apply_tts это метод модели
-                    try:
-                        audio = tts_model.apply_tts("Тест")
-                        print(f"   ✅ model.apply_tts работает с одним аргументом")
-                        api_type = 'model_method'
-                    except Exception as e3:
-                        print(f"   ❌ Ничего не работает")
-                        raise
+                    print(f"   ❌ Все варианты не работают: {str(e2)[:100]}")
+                    raise
             
-            # Сохраняем тип API для использования
-            app.config['SILERO_API_TYPE'] = api_type
-            print(f"   🎯 Определен тип API: {api_type}")
+            # Сохраняем функцию apply_tts в конфигурации
+            app.config['APPLY_TTS_FUNC'] = tts_apply_tts
+                
+        except ValueError as e:
+            # Если не удалось распаковать 5 элементов, пробуем новый API (2 элемента)
+            print(f"⚠️ Не удалось распаковать 5 элементов, пробую новый API...")
+            try:
+                tts_model, tts_example_text = torch.hub.load(
+                    repo_or_dir='snakers4/silero-models',
+                    model='silero_tts',
+                    language='ru',
+                    speaker='baya',
+                    force_reload=False,
+                    trust_repo=True,
+                    verbose=False
+                )
+                print(f"✅ Загружено 2 элемента (новый API)")
+                model_loaded = True
+                app.config['API_TYPE'] = 'model_method'
+            except Exception as e2:
+                print(f"❌ Ошибка загрузки: {str(e2)}")
+                raise
                 
         except Exception as e:
             print(f"❌ Ошибка загрузки модели: {str(e)}")
             traceback.print_exc()
             raise
     
-    return tts_model, tts_symbols, tts_sample_rate, tts_example_text, tts_apply_tts
+    return tts_model, tts_symbols, tts_sample_rate, tts_example_text
 
 # ========== ФУНКЦИЯ ГЕНЕРАЦИИ АУДИО ==========
 def generate_audio(text, language, speaker, sample_rate):
-    """Генерация аудио из текста для старого API"""
+    """Генерация аудио из текста"""
     try:
         start_time = time.time()
         
@@ -210,58 +174,51 @@ def generate_audio(text, language, speaker, sample_rate):
         print(f"   Текст: '{text[:100]}{'...' if len(text) > 100 else ''}'")
         
         # Загружаем модель
-        model, symbols, target_sample_rate, example_text, apply_tts_func = load_tts_model()
+        model, symbols, target_sample_rate, example_text = load_tts_model()
         
-        # Определяем тип API
-        api_type = app.config.get('SILERO_API_TYPE', 'positional_params')
+        # Получаем функцию apply_tts
+        apply_tts_func = app.config.get('APPLY_TTS_FUNC')
+        api_type = app.config.get('API_TYPE', 'positional')
         
         print(f"   ⚙️ Вызываю apply_tts (тип API: {api_type})...")
         
         # Генерация аудио в зависимости от типа API
-        if api_type == 'named_params':
-            # Именованные параметры
+        if api_type == 'positional' and apply_tts_func:
+            # ПОЗИЦИОННЫЕ аргументы - КЛЮЧЕВОЕ ИСПРАВЛЕНИЕ!
+            audio = apply_tts_func(
+                [text],  # texts - список, позиция 1
+                model,   # model, позиция 2
+                target_sample_rate,  # sample_rate, позиция 3
+                symbols,  # symbols, позиция 4
+                torch.device('cpu')  # device, позиция 5
+            )
+            
+        elif api_type == 'named' and apply_tts_func:
+            # Именованные аргументы
             audio = apply_tts_func(
                 texts=[text],
                 model=model,
-                sample_rate=target_sample_rate if target_sample_rate else 16000,
+                sample_rate=target_sample_rate,
                 symbols=symbols,
                 device=torch.device('cpu')
             )
             
-        elif api_type == 'positional_params':
-            # Позиционные параметры
-            audio = apply_tts_func(
-                [text],  # texts
-                model,   # model
-                target_sample_rate if target_sample_rate else 16000,  # sample_rate
-                symbols,  # symbols
-                torch.device('cpu')  # device
-            )
-            
         elif api_type == 'model_method':
-            # Метод модели
-            audio = model.apply_tts(text)
+            # Метод модели (новый API)
+            audio = model.apply_tts(
+                text=text,
+                speaker=speaker,
+                sample_rate=target_sample_rate
+            )
         else:
             # Пробуем все варианты
             try:
-                audio = apply_tts_func(
-                    texts=[text],
-                    model=model,
-                    sample_rate=target_sample_rate if target_sample_rate else 16000,
-                    symbols=symbols,
-                    device=torch.device('cpu')
-                )
-            except TypeError:
+                audio = apply_tts_func([text], model, target_sample_rate, symbols, torch.device('cpu'))
+            except:
                 try:
-                    audio = apply_tts_func(
-                        [text],
-                        model,
-                        target_sample_rate if target_sample_rate else 16000,
-                        symbols,
-                        torch.device('cpu')
-                    )
-                except Exception:
-                    audio = model.apply_tts(text)
+                    audio = apply_tts_func(texts=[text], model=model, sample_rate=target_sample_rate, symbols=symbols, device=torch.device('cpu'))
+                except:
+                    audio = model.apply_tts(text=text, speaker=speaker, sample_rate=target_sample_rate)
         
         # Извлекаем аудио если это список
         if isinstance(audio, list) and len(audio) > 0:
@@ -277,8 +234,6 @@ def generate_audio(text, language, speaker, sample_rate):
         # Приводим к правильной размерности
         if audio.ndim == 1:
             audio = audio.unsqueeze(0) if hasattr(audio, 'unsqueeze') else audio.reshape(1, -1)
-        elif audio.ndim == 2 and audio.shape[0] > audio.shape[1]:
-            audio = audio.transpose(0, 1) if hasattr(audio, 'transpose') else audio.T
         
         print(f"   📐 Финальный shape: {audio.shape}")
         
@@ -292,14 +247,11 @@ def generate_audio(text, language, speaker, sample_rate):
             dir=temp_dir
         )
         
-        # Используем правильную частоту дискретизации
-        save_sample_rate = target_sample_rate if target_sample_rate else 16000
-        
         print(f"   💾 Сохраняю аудио в файл: {temp_file.name}")
         torchaudio.save(
             temp_file.name,
             audio,
-            save_sample_rate,
+            target_sample_rate,
             format='wav'
         )
         
@@ -313,7 +265,7 @@ def generate_audio(text, language, speaker, sample_rate):
         
         # Вычисляем статистику
         generation_time = time.time() - start_time
-        audio_duration = audio.shape[-1] / save_sample_rate
+        audio_duration = audio.shape[-1] / target_sample_rate
         
         print(f"✅ Аудио успешно сгенерировано!")
         print(f"   ⏱️ Время: {generation_time:.2f} сек")
@@ -337,10 +289,9 @@ def index():
     except Exception as e:
         return jsonify({
             'service': 'Zindaki TTS Service',
-            'version': '6.0',
+            'version': '7.0',
             'status': 'running',
             'model_loaded': model_loaded,
-            'api_type': app.config.get('SILERO_API_TYPE', 'unknown'),
             'timestamp': datetime.now().isoformat()
         })
 
@@ -354,7 +305,6 @@ def tts_request():
         
         req = TTSRequest(**data)
         
-        # Проверка длины текста
         if len(req.text) == 0:
             return jsonify({'error': 'Text cannot be empty'}), 400
         
@@ -363,17 +313,10 @@ def tts_request():
                 'error': f'Text too long ({len(req.text)} chars). Max is 5000.'
             }), 400
         
-        # Проверяем голос
-        if req.speaker not in SILERO_CONFIG['ru']['speakers']:
-            return jsonify({
-                'error': f'Speaker {req.speaker} not supported. Available: {SILERO_CONFIG["ru"]["speakers"]}'
-            }), 400
-        
         print(f"\n📨 Получен TTS запрос:")
         print(f"   🗣️ Голос: {req.speaker}")
         print(f"   📝 Длина текста: {len(req.text)} символов")
         
-        # Создаем фоновую задачу
         job = queue.enqueue(
             generate_audio,
             args=(req.text, req.language, req.speaker, req.sample_rate),
@@ -387,7 +330,6 @@ def tts_request():
             'status': 'queued',
             'message': 'Задача добавлена в очередь',
             'model_loaded': model_loaded,
-            'api_type': app.config.get('SILERO_API_TYPE', 'unknown'),
             'timestamp': datetime.now().isoformat()
         }), 202
         
@@ -465,7 +407,6 @@ def health_check():
     try:
         redis_conn.ping()
         
-        # Пробуем загрузить модель
         if not model_loaded:
             try:
                 load_tts_model()
@@ -475,9 +416,9 @@ def health_check():
         return jsonify({
             'status': 'healthy',
             'service': 'zindaki-tts-service',
-            'version': '6.0',
+            'version': '7.0',
             'model_loaded': model_loaded,
-            'api_type': app.config.get('SILERO_API_TYPE', 'unknown'),
+            'api_type': app.config.get('API_TYPE', 'unknown'),
             'torch_version': torch.__version__,
             'python_version': sys.version.split()[0],
             'uptime': str(datetime.now() - startup_time),
@@ -495,22 +436,18 @@ def health_check():
 @app.route('/api/voices', methods=['GET'])
 def get_available_voices():
     """Список доступных голосов"""
-    voices = []
-    
-    for speaker in SILERO_CONFIG['ru']['speakers']:
-        voices.append({
-            'id': speaker,
-            'name': speaker.capitalize(),
-            'language': 'ru',
-            'sample_rate': 16000,
-            'loaded': model_loaded,
-            'status': '✅ Загружен' if model_loaded else '❌ Не загружен'
-        })
+    voices = [
+        {'id': 'aidar', 'name': 'Aidar', 'loaded': model_loaded, 'status': '✅ Загружен' if model_loaded else '❌ Не загружен'},
+        {'id': 'baya', 'name': 'Baya', 'loaded': model_loaded, 'status': '✅ Загружен' if model_loaded else '❌ Не загружен'},
+        {'id': 'kseniya', 'name': 'Kseniya', 'loaded': model_loaded, 'status': '✅ Загружен' if model_loaded else '❌ Не загружен'},
+        {'id': 'irina', 'name': 'Irina', 'loaded': model_loaded, 'status': '✅ Загружен' if model_loaded else '❌ Не загружен'},
+        {'id': 'natasha', 'name': 'Natasha', 'loaded': model_loaded, 'status': '✅ Загружен' if model_loaded else '❌ Не загружен'},
+        {'id': 'ruslan', 'name': 'Ruslan', 'loaded': model_loaded, 'status': '✅ Загружен' if model_loaded else '❌ Не загружен'},
+    ]
     
     return jsonify({
         'all_voices': {'ru': voices},
         'model_loaded': model_loaded,
-        'api_type': app.config.get('SILERO_API_TYPE', 'unknown'),
         'timestamp': datetime.now().isoformat()
     })
 
@@ -520,45 +457,33 @@ def test_endpoint():
     try:
         print(f"🧪 Выполняю тестовый запрос...")
         
-        # Загружаем модель
-        model, symbols, sample_rate, example_text, apply_tts_func = load_tts_model()
+        model, symbols, sample_rate, example_text = load_tts_model()
+        apply_tts_func = app.config.get('APPLY_TTS_FUNC')
+        api_type = app.config.get('API_TYPE', 'positional')
         
         test_text = "Привет! Тест."
         print(f"   Текст: {test_text}")
-        print(f"   API тип: {app.config.get('SILERO_API_TYPE', 'unknown')}")
+        print(f"   API тип: {api_type}")
         
-        # Тест в зависимости от типа API
-        api_type = app.config.get('SILERO_API_TYPE', 'positional_params')
-        
-        if api_type == 'named_params':
-            audio = apply_tts_func(
-                texts=[test_text],
-                model=model,
-                sample_rate=sample_rate if sample_rate else 16000,
-                symbols=symbols,
-                device=torch.device('cpu')
-            )
-        elif api_type == 'positional_params':
+        if api_type == 'positional' and apply_tts_func:
             audio = apply_tts_func(
                 [test_text],
                 model,
-                sample_rate if sample_rate else 16000,
+                sample_rate,
                 symbols,
                 torch.device('cpu')
             )
-        elif api_type == 'model_method':
-            audio = model.apply_tts(test_text)
+        elif api_type == 'named' and apply_tts_func:
+            audio = apply_tts_func(
+                texts=[test_text],
+                model=model,
+                sample_rate=sample_rate,
+                symbols=symbols,
+                device=torch.device('cpu')
+            )
         else:
-            # Автоопределение
-            try:
-                audio = apply_tts_func(texts=[test_text])
-            except:
-                try:
-                    audio = apply_tts_func([test_text])
-                except:
-                    audio = model.apply_tts(test_text)
+            audio = model.apply_tts(text=test_text, speaker='baya', sample_rate=sample_rate)
         
-        # Извлекаем аудио если нужно
         if isinstance(audio, list) and len(audio) > 0:
             audio = audio[0]
         
@@ -572,7 +497,6 @@ def test_endpoint():
             'message': 'TTS сервис работает корректно',
             'audio_shape': audio_shape,
             'model_loaded': model_loaded,
-            'api_type': api_type,
             'timestamp': datetime.now().isoformat()
         })
         
@@ -588,7 +512,6 @@ def test_endpoint():
 # ========== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ==========
 
 def cleanup_temp_files():
-    """Очистка временных файлов"""
     temp_dir = '/app/temp_audio'
     if os.path.exists(temp_dir):
         try:
@@ -610,7 +533,6 @@ def cleanup_temp_files():
             print(f"⚠️ Ошибка очистки временных файлов: {e}")
 
 def periodic_cleanup():
-    """Периодическая очистка"""
     while True:
         time.sleep(3600)
         cleanup_temp_files()
@@ -621,56 +543,27 @@ atexit.register(cleanup_temp_files)
 
 if __name__ == '__main__':
     print("\n" + "=" * 70)
-    print("🎵 ZINDAKI TTS SERVICE v6.0 - Для старого API Silero")
+    print("🎵 ZINDAKI TTS SERVICE v7.0 - Возврат к рабочему коду")
     print("=" * 70)
     print(f"📅 Дата запуска: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"🐍 Python версия: {sys.version.split()[0]}")
     print(f"🔥 PyTorch версия: {torch.__version__}")
     
-    # Запускаем очистку
     cleanup_thread = threading.Thread(target=periodic_cleanup, daemon=True)
     cleanup_thread.start()
     
-    print("\n⏳ Пробую загрузить модель...")
+    print("\n⏳ Загружаю модель...")
     try:
-        # Очищаем старый кэш
         cache_path = '/app/cache/torch/hub/snakers4_silero-models_master'
         if os.path.exists(cache_path):
-            print(f"🧹 Очищаю старый кэш модели...")
+            print(f"🧹 Очищаю кэш...")
             shutil.rmtree(cache_path)
         
-        # Загружаем модель
         load_tts_model()
         print(f"✅ Модель загружена: {model_loaded}")
-        print(f"   API тип: {app.config.get('SILERO_API_TYPE', 'unknown')}")
         
-        # Тестируем
-        if model_loaded:
-            print(f"\n🧪 Тестирую генерацию...")
-            test_text = "Тест"
-            
-            if app.config.get('SILERO_API_TYPE') == 'positional_params':
-                model, symbols, sample_rate, example_text, apply_tts_func = load_tts_model()
-                audio = apply_tts_func(
-                    [test_text],
-                    model,
-                    sample_rate if sample_rate else 16000,
-                    symbols,
-                    torch.device('cpu')
-                )
-            else:
-                # Пробуем другой вариант
-                audio = apply_tts_func(texts=[test_text])
-            
-            print(f"✅ Тестовая генерация успешна")
-            if isinstance(audio, list):
-                print(f"   Результат список из {len(audio)} элементов")
-            else:
-                print(f"   Тип результата: {type(audio)}")
-            
     except Exception as e:
-        print(f"⚠️ Не удалось загрузить модель при старте: {e}")
-        print("   Модель будет загружена при первом запросе")
+        print(f"⚠️ Ошибка при старте: {e}")
     
     print("\n🚀 Запуск Flask сервера...")
     print(f"🌐 Доступен по адресу: http://0.0.0.0:5000")
