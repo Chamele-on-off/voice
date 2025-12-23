@@ -13,11 +13,11 @@ import tempfile
 import atexit
 import shutil
 
-# Инициализация Redis (используем отдельную БД для TTS)
+# Инициализация Redis
 redis_conn = redis.Redis(
-    host=os.getenv('REDIS_HOST', 'tts-redis'),  # МЕНЯЕМ localhost на tts-redis
+    host=os.getenv('REDIS_HOST', 'tts-redis'),
     port=int(os.getenv('REDIS_PORT', 6379)),
-    db=1,  # Используем БД 1, чтобы не конфликтовать с другими приложениями
+    db=1,
     socket_connect_timeout=5,
     socket_timeout=5
 )
@@ -39,8 +39,8 @@ class TTSRequest(BaseModel):
     """Модель для валидации входящих запросов"""
     text: str
     language: str = 'ru'
-    speaker: str = 'aidar'
-    sample_rate: int = 24000  # Уменьшаем для ускорения
+    speaker: str = 'baya'  # Женский голос по умолчанию
+    sample_rate: int = 24000
     put_accent: bool = True
     put_yo: bool = True
 
@@ -51,7 +51,6 @@ def load_model(language, speaker):
     if model_key not in tts_models:
         print(f"Loading model: {language}, speaker: {speaker}")
         
-        # Загружаем модель через torch.hub
         device = torch.device('cpu')
         
         try:
@@ -76,16 +75,14 @@ def load_model(language, speaker):
     return tts_models[model_key]
 
 def generate_audio(text, language, speaker, sample_rate, put_accent=True, put_yo=True):
-    """Генерация аудио (вызывается из фоновой задачи)"""
+    """Генерация аудио"""
     try:
         print(f"Generating audio for: '{text[:100]}...' (lang: {language}, speaker: {speaker})")
         
-        # Загружаем модель
         model_info = load_model(language, speaker)
         model = model_info['model']
         device = model_info['device']
         
-        # Генерация аудио
         audio = model.apply_tts(
             text=text,
             speaker=speaker,
@@ -94,7 +91,6 @@ def generate_audio(text, language, speaker, sample_rate, put_accent=True, put_yo
             put_yo=put_yo
         )
         
-        # Сохраняем во временный файл
         temp_dir = os.path.join(os.path.dirname(__file__), 'temp_audio')
         os.makedirs(temp_dir, exist_ok=True)
         
@@ -104,7 +100,6 @@ def generate_audio(text, language, speaker, sample_rate, put_accent=True, put_yo
             dir=temp_dir
         )
         
-        # Сохраняем аудио
         torchaudio.save(
             temp_file.name, 
             audio.unsqueeze(0), 
@@ -134,16 +129,14 @@ def tts_request():
             
         req = TTSRequest(**data)
         
-        # Проверяем язык
         if req.language not in MODELS:
             return jsonify({'error': f'Unsupported language: {req.language}'}), 400
         
-        # Создаем фоновую задачу
         job = q.enqueue(
             generate_audio,
             args=(req.text, req.language, req.speaker, req.sample_rate, req.put_accent, req.put_yo),
             job_timeout=300,
-            result_ttl=3600  # Результаты храним 1 час
+            result_ttl=3600
         )
         
         return jsonify({
@@ -161,7 +154,7 @@ def tts_request():
 
 @app.route('/api/status/<job_id>', methods=['GET'])
 def get_status(job_id):
-    """Проверка статуса задачи и получение результата"""
+    """Проверка статуса задачи"""
     try:
         job = Job.fetch(job_id, connection=redis_conn)
         
@@ -170,10 +163,8 @@ def get_status(job_id):
             if result is None:
                 return jsonify({'error': 'Job result is empty'}), 500
             
-            # Проверяем, является ли результат путем к файлу
             if isinstance(result, str) and os.path.exists(result):
                 try:
-                    # Отправляем файл
                     response = send_file(
                         result,
                         mimetype='audio/wav',
@@ -181,7 +172,6 @@ def get_status(job_id):
                         download_name=f'tts_{job_id}.wav'
                     )
                     
-                    # Удаляем файл после отправки (в фоне)
                     @response.call_on_close
                     def cleanup_file():
                         try:
@@ -217,10 +207,10 @@ def get_status(job_id):
 
 @app.route('/api/voices', methods=['GET'])
 def get_available_voices():
-    """Возвращает список доступных голосов для каждого языка"""
+    """Возвращает список доступных голосов"""
     voices = {
-        'ru': ['aidar', 'baya', 'kseniya', 'xenia', 'random'],
-        'en': ['en_0', 'en_1', 'en_2', 'en_3', 'en_4', 'random']
+        'ru': ['baya', 'kseniya', 'xenia'],  # Только женские
+        'en': ['en_1', 'en_3']  # Женские английские
     }
     return jsonify(voices)
 
@@ -228,10 +218,7 @@ def get_available_voices():
 def health_check():
     """Проверка здоровья сервиса"""
     try:
-        # Проверяем Redis соединение
         redis_conn.ping()
-        
-        # Проверяем наличие моделей в памяти
         models_loaded = len(tts_models) > 0
         
         return jsonify({
@@ -239,7 +226,8 @@ def health_check():
             'redis': 'connected',
             'models_loaded': models_loaded,
             'queue_size': len(q),
-            'service': 'zindaki-tts'
+            'service': 'zindaki-tts',
+            'female_voices_loaded': list(tts_models.keys())
         }), 200
     except Exception as e:
         return jsonify({
@@ -248,7 +236,7 @@ def health_check():
         }), 500
 
 def cleanup_temp_files():
-    """Очистка временных файлов при завершении"""
+    """Очистка временных файлов"""
     temp_dir = os.path.join(os.path.dirname(__file__), 'temp_audio')
     if os.path.exists(temp_dir):
         try:
@@ -256,11 +244,9 @@ def cleanup_temp_files():
         except:
             pass
 
-# Регистрируем очистку при завершении
 atexit.register(cleanup_temp_files)
 
 if __name__ == '__main__':
-    # Создаем директории
     os.makedirs('temp_audio', exist_ok=True)
     
     app.run(
