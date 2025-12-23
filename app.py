@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 """
 ZINDAKI TTS SERVICE - Полная исправленная версия
-Исправлена ошибка: 'list' object has no attribute 'unsqueeze'
-Функция apply_tts возвращает список аудиофайлов!
+С шаблоном index.html и исправленной ошибкой 'list' object has no attribute 'unsqueeze'
 """
 
 import os
@@ -13,7 +12,7 @@ import tempfile
 import time
 import shutil
 from datetime import datetime
-from flask import Flask, request, jsonify, send_file
+from flask import Flask, request, jsonify, send_file, render_template
 from flask_cors import CORS
 from pydantic import BaseModel, ValidationError
 import redis
@@ -45,7 +44,7 @@ redis_conn = redis.Redis(
 queue = Queue(connection=redis_conn, default_timeout=600)
 
 # ========== НАСТРОЙКА FLASK ==========
-app = Flask(__name__)
+app = Flask(__name__, template_folder='templates')
 CORS(app, resources={r"/*": {"origins": "*"}})
 
 # ========== ГЛОБАЛЬНЫЕ ПЕРЕМЕННЫЕ ==========
@@ -268,75 +267,31 @@ def generate_audio(text, language, speaker, sample_rate):
         traceback.print_exc()
         raise
 
-# ========== УПРОЩЕННАЯ ВЕРСИЯ ГЕНЕРАЦИИ (альтернативная) ==========
-def generate_audio_simple(text, language, speaker, sample_rate):
-    """
-    Упрощенная версия генерации аудио
-    Для случаев, когда основная функция не работает
-    """
-    try:
-        print(f"🎵 Упрощенная генерация: {language}/{speaker}")
-        
-        # Загружаем модель
-        model_info = load_tts_model(language, speaker)
-        
-        # Генерация
-        audio_result = model_info['apply_tts'](
-            texts=[text],
-            model=model_info['model'],
-            sample_rate=model_info['sample_rate'],
-            symbols=model_info['symbols'],
-            device=model_info['device']
-        )
-        
-        # Обработка результата
-        if isinstance(audio_result, list):
-            print(f"   📊 Результат - список из {len(audio_result)} элементов")
-            audio = audio_result[0]
-        else:
-            print(f"   📊 Результат - не список: {type(audio_result)}")
-            audio = audio_result
-        
-        # Приводим к правильной размерности
-        if hasattr(audio, 'ndim'):
-            if audio.ndim == 1:
-                # 1D -> 2D
-                audio = audio.unsqueeze(0) if hasattr(audio, 'unsqueeze') else audio.reshape(1, -1)
-        
-        # Сохраняем
-        temp_file = tempfile.NamedTemporaryFile(suffix='.wav', delete=False)
-        torchaudio.save(
-            temp_file.name,
-            audio,
-            model_info['sample_rate'],
-            format='wav'
-        )
-        
-        print(f"✅ Аудио сохранено: {temp_file.name}")
-        return temp_file.name
-        
-    except Exception as e:
-        print(f"❌ Ошибка в упрощенной генерации: {e}")
-        # Пробуем основную функцию
-        return generate_audio(text, language, speaker, sample_rate)
-
 # ========== API МАРШРУТЫ ==========
 
 @app.route('/')
 def index():
-    """Главная страница"""
-    return jsonify({
-        'service': 'Zindaki TTS Service',
-        'version': '1.0',
-        'status': 'running',
-        'endpoints': {
-            '/api/tts': 'POST - генерация аудио',
-            '/api/health': 'GET - проверка здоровья',
-            '/api/voices': 'GET - список голосов',
-            '/api/test': 'GET - тестовый запрос',
-            '/api/debug': 'GET - отладочная информация'
-        }
-    })
+    """Главная страница с веб-интерфейсом"""
+    try:
+        return render_template('index.html')
+    except Exception as e:
+        # Если шаблон не найден, показываем JSON
+        print(f"⚠️ Шаблон index.html не найден: {e}")
+        return jsonify({
+            'service': 'Zindaki TTS Service',
+            'version': '1.0',
+            'status': 'running',
+            'endpoints': {
+                '/': 'GET - главная страница',
+                '/api/tts': 'POST - генерация аудио',
+                '/api/health': 'GET - проверка здоровья',
+                '/api/voices': 'GET - список голосов',
+                '/api/test': 'GET - тестовый запрос',
+                '/api/debug': 'GET - отладочная информация',
+                '/api/status/<job_id>': 'GET - статус задачи'
+            },
+            'note': 'Добавьте файл templates/index.html для веб-интерфейса'
+        })
 
 @app.route('/api/tts', methods=['POST'])
 def tts_request():
@@ -502,6 +457,14 @@ def get_available_voices():
                 'gender': 'female',
                 'sample_rate': 16000,
                 'description': 'Мягкий женский голос'
+            },
+            {
+                'id': 'aidar',
+                'name': 'Айдар',
+                'actual': SPEAKER_MAPPING['ru'].get('aidar', 'aidar_16khz'),
+                'gender': 'male',
+                'sample_rate': 16000,
+                'description': 'Мужской голос'
             }
         ],
         'en': [
@@ -590,12 +553,20 @@ def test_endpoint():
 @app.route('/api/debug', methods=['GET'])
 def debug_info():
     """Отладочная информация"""
+    # Проверяем наличие директории templates
+    templates_dir = '/app/templates'
+    template_files = []
+    if os.path.exists(templates_dir):
+        template_files = os.listdir(templates_dir)
+    
     return jsonify({
         'torch_version': torch.__version__,
         'torchaudio_version': torchaudio.__version__,
         'python_version': sys.version,
         'environment': {k: v for k, v in os.environ.items() if 'TORCH' in k or 'CACHE' in k},
         'cache_dir_contents': os.listdir('/app/cache') if os.path.exists('/app/cache') else [],
+        'templates_dir': templates_dir,
+        'template_files': template_files,
         'models_loaded': list(tts_models.keys()),
         'tts_models_structure': {k: list(v.keys()) for k, v in tts_models.items()} if tts_models else {},
         'timestamp': datetime.now().isoformat()
@@ -669,6 +640,19 @@ if __name__ == '__main__':
     print(f"🔥 PyTorch версия: {torch.__version__}")
     print(f"🎵 TorchAudio версия: {torchaudio.__version__}")
     print(f"📁 Кэш директория: {os.environ.get('TORCH_HOME')}")
+    print(f"📁 Директория шаблонов: /app/templates")
+    
+    # Проверяем наличие директории templates
+    templates_dir = '/app/templates'
+    if os.path.exists(templates_dir):
+        print(f"✅ Директория templates существует")
+        files = os.listdir(templates_dir)
+        print(f"   Файлы: {files}")
+    else:
+        print(f"⚠️ Директория templates не существует")
+        os.makedirs(templates_dir, exist_ok=True)
+        print(f"   Создана новая директория")
+    
     print(f"🔗 Redis: {os.getenv('REDIS_HOST', 'tts-redis')}:{os.getenv('REDIS_PORT', 6379)}")
     print("=" * 70)
     
@@ -693,6 +677,7 @@ if __name__ == '__main__':
     # Запуск сервера
     print("\n🚀 Запуск Flask сервера...")
     print(f"🌐 Доступен по адресу: http://0.0.0.0:5000")
+    print(f"📚 API доступен по: http://0.0.0.0:5000/api/health")
     print("=" * 70)
     
     app.run(
