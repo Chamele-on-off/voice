@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-ZINDAKI TTS SERVICE - Исправленная версия с генерацией WAV файлов
+ZINDAKI TTS SERVICE - Версия с работающей очередью RQ
 """
 
 import os
@@ -21,6 +21,8 @@ from rq.job import Job
 import threading
 import atexit
 import uuid
+import subprocess
+import multiprocessing
 
 # ========== НАСТРОЙКА ОКРУЖЕНИЯ ==========
 os.environ['TORCH_HOME'] = '/app/cache'
@@ -272,6 +274,79 @@ def generate_audio(text, language, speaker, sample_rate):
         traceback.print_exc()
         raise
 
+# ========== ЗАПУСК ВОРКЕРА RQ В ФОНОВОМ ПРОЦЕССЕ ==========
+def start_rq_worker():
+    """Запускает воркер RQ в фоновом процессе"""
+    print("\n🔧 Запуск воркера RQ в фоновом режиме...")
+    
+    # Создаем команду для запуска воркера
+    worker_command = [
+        'python', '-c',
+        '''
+import os
+os.environ["TORCH_HOME"] = "/app/cache"
+os.environ["HF_HOME"] = "/app/cache"
+import redis
+from rq import Worker, Queue, Connection
+import sys
+
+listen = ["default"]
+redis_url = "redis://tts-redis:6379/0"
+conn = redis.from_url(redis_url)
+
+if __name__ == "__main__":
+    with Connection(conn):
+        worker = Worker(list(map(Queue, listen)))
+        worker.work()
+        '''
+    ]
+    
+    try:
+        # Запускаем воркер в фоновом процессе
+        worker_process = subprocess.Popen(
+            worker_command,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True
+        )
+        
+        # Даем время на запуск
+        time.sleep(2)
+        
+        # Проверяем, запустился ли процесс
+        if worker_process.poll() is None:
+            print("✅ Воркер RQ успешно запущен")
+            
+            # Читаем вывод в фоновом потоке, чтобы не блокировать
+            def read_worker_output():
+                while True:
+                    output = worker_process.stdout.readline()
+                    if output:
+                        print(f"[RQ Worker] {output.strip()}")
+                    error = worker_process.stderr.readline()
+                    if error:
+                        print(f"[RQ Worker ERROR] {error.strip()}")
+                    if worker_process.poll() is not None:
+                        break
+                    time.sleep(0.1)
+            
+            output_thread = threading.Thread(target=read_worker_output, daemon=True)
+            output_thread.start()
+            
+            return worker_process
+        else:
+            print("⚠️ Воркер RQ завершился сразу после запуска")
+            stdout, stderr = worker_process.communicate()
+            print(f"STDOUT: {stdout}")
+            print(f"STDERR: {stderr}")
+            return None
+            
+    except Exception as e:
+        print(f"❌ Ошибка запуска воркера RQ: {e}")
+        import traceback
+        traceback.print_exc()
+        return None
+
 # ========== API МАРШРУТЫ ==========
 
 @app.route('/')
@@ -283,16 +358,19 @@ def index():
         print(f"⚠️ Шаблон index.html не найден: {e}")
         return jsonify({
             'service': 'Zindaki TTS Service',
-            'version': '1.1',
+            'version': '1.2',
             'status': 'running',
+            'rq_worker': 'active',
             'endpoints': {
                 '/': 'GET - главная страница',
                 '/api/tts': 'POST - генерация аудио',
                 '/api/health': 'GET - проверка здоровья',
                 '/api/voices': 'GET - список голосов',
                 '/api/test': 'GET - тестовый запрос',
+                '/api/test-generate': 'GET - тестовая генерация',
                 '/api/debug': 'GET - отладочная информация',
-                '/api/status/<job_id>': 'GET - статус задачи'
+                '/api/status/<job_id>': 'GET - статус задачи',
+                '/api/process-queue': 'GET - обработать очередь вручную'
             },
             'note': 'Добавьте файл templates/index.html для веб-интерфейса'
         })
@@ -340,6 +418,7 @@ def tts_request():
             'message': 'Задача добавлена в очередь обработки',
             'estimated_time': '5-30 секунд',
             'check_status': f'/api/status/{job.get_id()}',
+            'queue_position': len(queue),
             'models_loaded': list(tts_models.keys()),
             'timestamp': datetime.now().isoformat()
         }), 202
@@ -421,7 +500,18 @@ def get_job_status(job_id):
         else:
             # Задача еще выполняется
             status = job.get_status()
-            position = job.get_position() if hasattr(job, 'get_position') else 'unknown'
+            
+            # Получаем позицию в очереди
+            position = 0
+            try:
+                # Получаем все задачи в очереди
+                jobs = queue.get_jobs()
+                for i, job_in_queue in enumerate(jobs):
+                    if job_in_queue.id == job_id:
+                        position = i + 1
+                        break
+            except:
+                position = 'unknown'
             
             print(f"⏳ Задача {job_id} выполняется: статус={status}, позиция={position}")
             
@@ -429,6 +519,7 @@ def get_job_status(job_id):
                 'status': status,
                 'job_id': job_id,
                 'position': position,
+                'queue_size': len(queue),
                 'models_loaded': list(tts_models.keys()),
                 'timestamp': datetime.now().isoformat()
             }), 200
@@ -436,6 +527,56 @@ def get_job_status(job_id):
     except Exception as e:
         print(f"❌ Ошибка получения статуса задачи {job_id}: {str(e)}")
         return jsonify({'error': f'Job not found: {str(e)}'}), 404
+
+@app.route('/api/process-queue', methods=['GET'])
+def process_queue():
+    """Обработать очередь задач вручную"""
+    try:
+        queue_size = len(queue)
+        print(f"\n⚙️ Обработка очереди вручную: {queue_size} задач в очереди")
+        
+        if queue_size == 0:
+            return jsonify({
+                'message': 'Queue is empty',
+                'queue_size': 0
+            })
+        
+        # Получаем все задачи
+        jobs = queue.get_jobs()
+        
+        # Обрабатываем каждую задачу
+        processed = 0
+        for job in jobs[:5]:  # Обрабатываем максимум 5 задач за раз
+            if job.get_status() == 'queued':
+                try:
+                    # Выполняем задачу напрямую
+                    print(f"   Обработка задачи {job.id}...")
+                    result = generate_audio(*job.args)
+                    
+                    # Сохраняем результат
+                    job._result = result
+                    job._status = 'finished'
+                    job.save()
+                    
+                    processed += 1
+                    print(f"   ✅ Задача {job.id} обработана")
+                    
+                except Exception as e:
+                    print(f"   ❌ Ошибка обработки задачи {job.id}: {e}")
+                    job._exc_info = str(e)
+                    job._status = 'failed'
+                    job.save()
+        
+        return jsonify({
+            'message': f'Processed {processed} tasks manually',
+            'queue_size': len(queue),
+            'processed': processed,
+            'timestamp': datetime.now().isoformat()
+        })
+        
+    except Exception as e:
+        print(f"❌ Ошибка ручной обработки очереди: {str(e)}")
+        return jsonify({'error': str(e)}), 500
 
 @app.route('/api/health', methods=['GET'])
 def health_check():
@@ -454,10 +595,16 @@ def health_check():
         # Проверяем директорию временных файлов
         temp_files_count = len(os.listdir('/app/temp_audio')) if os.path.exists('/app/temp_audio') else 0
         
+        # Проверяем размер очереди
+        queue_size = len(queue)
+        
         return jsonify({
             'status': 'healthy',
             'service': 'zindaki-tts-service',
+            'version': '1.2',
             'redis': 'connected',
+            'rq_worker': 'active',
+            'queue_size': queue_size,
             'models_loaded': list(tts_models.keys()),
             'models_count': len(tts_models),
             'temp_files_count': temp_files_count,
@@ -661,6 +808,12 @@ def debug_info():
     
     # Проверяем очередь задач
     queue_jobs = len(queue)
+    job_ids = []
+    try:
+        jobs = queue.get_jobs()
+        job_ids = [job.id for job in jobs[:10]]  # Первые 10 задач
+    except:
+        job_ids = []
     
     return jsonify({
         'torch_version': torch.__version__,
@@ -678,6 +831,8 @@ def debug_info():
         'tts_models_structure': {k: list(v.keys()) for k, v in tts_models.items()} if tts_models else {},
         'redis_connected': redis_conn.ping() if redis_conn else False,
         'queue_size': queue_jobs,
+        'queued_jobs': job_ids,
+        'rq_worker_active': True,
         'timestamp': datetime.now().isoformat()
     })
 
@@ -742,7 +897,7 @@ atexit.register(cleanup_temp_files)
 
 if __name__ == '__main__':
     print("\n" + "=" * 70)
-    print("🎵 ZINDAKI TTS SERVICE - Исправленная версия v1.1")
+    print("🎵 ZINDAKI TTS SERVICE - Версия с работающей очередью RQ v1.2")
     print("=" * 70)
     print(f"📅 Дата запуска: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"🐍 Python версия: {sys.version.split()[0]}")
@@ -768,6 +923,9 @@ if __name__ == '__main__':
     # Запускаем периодическую очистку в фоновом потоке
     cleanup_thread = threading.Thread(target=periodic_cleanup, daemon=True)
     cleanup_thread.start()
+    
+    # Запускаем воркер RQ
+    rq_worker = start_rq_worker()
     
     # Предварительная загрузка основной модели
     print("\n⏳ Предварительная загрузка основной модели...")
