@@ -12,6 +12,8 @@ import torchaudio
 import tempfile
 import atexit
 import shutil
+import threading
+import time
 
 # Инициализация Redis
 redis_conn = redis.Redis(
@@ -23,17 +25,16 @@ redis_conn = redis.Redis(
 )
 q = Queue(connection=redis_conn, default_timeout=600)
 
-# Модели Silero TTS
-MODELS = {
-    'en': 'v3_en',
-    'ru': 'v3_ru'
-}
+# Настройки кэша для torch
+os.environ['TORCH_HOME'] = '/app/cache'
+os.environ['HF_HOME'] = '/app/cache'
 
 app = Flask(__name__, template_folder='templates')
 CORS(app, resources={r"/*": {"origins": "*"}})
 
 # Глобальные переменные для хранения загруженных моделей
 tts_models = {}
+models_loading = False
 
 class TTSRequest(BaseModel):
     """Модель для валидации входящих запросов"""
@@ -44,14 +45,56 @@ class TTSRequest(BaseModel):
     put_accent: bool = True
     put_yo: bool = True
 
+def load_model_in_background():
+    """Фоновая загрузка моделей при старте"""
+    global models_loading, tts_models
+    
+    models_loading = True
+    print("🎀 Starting background loading of female TTS voices...")
+    
+    # Женские голоса для загрузки
+    voices_to_load = [
+        ('ru', 'baya'),
+        ('ru', 'kseniya'),
+        ('ru', 'xenia'),
+        ('en', 'en_1'),
+        ('en', 'en_3')
+    ]
+    
+    for language, speaker in voices_to_load:
+        try:
+            print(f"Loading {language} female voice: {speaker}")
+            
+            model, example_text = torch.hub.load(
+                repo_or_dir='snakers4/silero-models',
+                model='silero_tts',
+                language=language,
+                speaker=speaker,
+                force_reload=False
+            )
+            model.to('cpu')
+            
+            model_key = f"{language}_{speaker}"
+            tts_models[model_key] = {
+                'model': model,
+                'example_text': example_text,
+                'device': 'cpu'
+            }
+            
+            print(f"✅ Loaded: {model_key}")
+            
+        except Exception as e:
+            print(f"⚠️ Failed to load {language}_{speaker}: {e}")
+    
+    models_loading = False
+    print(f"🎀 Female voices loaded: {list(tts_models.keys())}")
+
 def load_model(language, speaker):
     """Загружаем модель Silero TTS (кешируем в памяти)"""
     model_key = f"{language}_{speaker}"
     
     if model_key not in tts_models:
-        print(f"Loading model: {language}, speaker: {speaker}")
-        
-        device = torch.device('cpu')
+        print(f"Loading model on demand: {model_key}")
         
         try:
             model, example_text = torch.hub.load(
@@ -60,12 +103,12 @@ def load_model(language, speaker):
                 language=language,
                 speaker=speaker
             )
-            model.to(device)
+            model.to('cpu')
             
             tts_models[model_key] = {
                 'model': model,
                 'example_text': example_text,
-                'device': device
+                'device': 'cpu'
             }
             print(f"✅ Model {model_key} loaded successfully")
         except Exception as e:
@@ -77,11 +120,10 @@ def load_model(language, speaker):
 def generate_audio(text, language, speaker, sample_rate, put_accent=True, put_yo=True):
     """Генерация аудио"""
     try:
-        print(f"Generating audio for: '{text[:100]}...' (lang: {language}, speaker: {speaker})")
+        print(f"Generating audio: '{text[:100]}...' (lang: {language}, speaker: {speaker})")
         
         model_info = load_model(language, speaker)
         model = model_info['model']
-        device = model_info['device']
         
         audio = model.apply_tts(
             text=text,
@@ -91,7 +133,7 @@ def generate_audio(text, language, speaker, sample_rate, put_accent=True, put_yo
             put_yo=put_yo
         )
         
-        temp_dir = os.path.join(os.path.dirname(__file__), 'temp_audio')
+        temp_dir = '/app/temp_audio'
         os.makedirs(temp_dir, exist_ok=True)
         
         temp_file = tempfile.NamedTemporaryFile(
@@ -107,7 +149,6 @@ def generate_audio(text, language, speaker, sample_rate, put_accent=True, put_yo
             format='wav'
         )
         
-        print(f"✅ Audio generated: {temp_file.name}")
         return temp_file.name
         
     except Exception as e:
@@ -129,9 +170,11 @@ def tts_request():
             
         req = TTSRequest(**data)
         
-        if req.language not in MODELS:
+        # Проверяем поддерживаемые языки
+        if req.language not in ['ru', 'en']:
             return jsonify({'error': f'Unsupported language: {req.language}'}), 400
         
+        # Создаем фоновую задачу
         job = q.enqueue(
             generate_audio,
             args=(req.text, req.language, req.speaker, req.sample_rate, req.put_accent, req.put_yo),
@@ -219,15 +262,14 @@ def health_check():
     """Проверка здоровья сервиса"""
     try:
         redis_conn.ping()
-        models_loaded = len(tts_models) > 0
         
         return jsonify({
             'status': 'healthy',
             'redis': 'connected',
-            'models_loaded': models_loaded,
+            'models_loaded': list(tts_models.keys()),
+            'models_loading': models_loading,
             'queue_size': len(q),
-            'service': 'zindaki-tts',
-            'female_voices_loaded': list(tts_models.keys())
+            'service': 'zindaki-tts-female'
         }), 200
     except Exception as e:
         return jsonify({
@@ -237,17 +279,29 @@ def health_check():
 
 def cleanup_temp_files():
     """Очистка временных файлов"""
-    temp_dir = os.path.join(os.path.dirname(__file__), 'temp_audio')
+    temp_dir = '/app/temp_audio'
     if os.path.exists(temp_dir):
         try:
-            shutil.rmtree(temp_dir)
-        except:
-            pass
+            for filename in os.listdir(temp_dir):
+                file_path = os.path.join(temp_dir, filename)
+                try:
+                    if os.path.isfile(file_path):
+                        os.unlink(file_path)
+                except Exception as e:
+                    print(f"Error deleting {file_path}: {e}")
+        except Exception as e:
+            print(f"Error cleaning temp dir: {e}")
 
 atexit.register(cleanup_temp_files)
 
 if __name__ == '__main__':
-    os.makedirs('temp_audio', exist_ok=True)
+    # Создаем директории
+    os.makedirs('/app/temp_audio', exist_ok=True)
+    os.makedirs('/app/cache', exist_ok=True)
+    
+    # Запускаем фоновую загрузку моделей
+    bg_thread = threading.Thread(target=load_model_in_background, daemon=True)
+    bg_thread.start()
     
     app.run(
         host='0.0.0.0',
