@@ -267,7 +267,7 @@
         }
         
         .hidden {
-            display: none;
+            display: none !important;
         }
         
         .mode-description {
@@ -533,6 +533,117 @@
             color: #666;
             font-size: 0.8rem;
         }
+        
+        .modal-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0,0,0,0.5);
+            display: none;
+            align-items: center;
+            justify-content: center;
+            z-index: 2000;
+        }
+        
+        .modal-overlay.active {
+            display: flex;
+        }
+        
+        .modal-content {
+            background: white;
+            padding: 30px;
+            border-radius: 15px;
+            max-width: 500px;
+            width: 90%;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.3);
+            animation: modalSlideIn 0.3s ease;
+        }
+        
+        @keyframes modalSlideIn {
+            from { transform: translateY(-20px); opacity: 0; }
+            to { transform: translateY(0); opacity: 1; }
+        }
+        
+        .modal-title {
+            color: #dc3545;
+            margin-bottom: 20px;
+            font-size: 1.5rem;
+        }
+        
+        .modal-actions {
+            display: flex;
+            gap: 10px;
+            margin-top: 25px;
+        }
+        
+        .modal-btn {
+            flex: 1;
+            border: none;
+            padding: 12px 20px;
+            border-radius: 8px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+        
+        .modal-btn-danger {
+            background: linear-gradient(135deg, #dc3545 0%, #e4606d 100%);
+            color: white;
+        }
+        
+        .modal-btn-secondary {
+            background: #6c757d;
+            color: white;
+        }
+        
+        .modal-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(0,0,0,0.2);
+        }
+        
+        .clear-option {
+            display: flex;
+            align-items: flex-start;
+            margin-bottom: 15px;
+            cursor: pointer;
+            padding: 10px;
+            border-radius: 8px;
+            transition: background 0.3s ease;
+        }
+        
+        .clear-option:hover {
+            background: #f8f9fa;
+        }
+        
+        .clear-option input[type="radio"] {
+            margin-right: 12px;
+            margin-top: 3px;
+        }
+        
+        .clear-option-details {
+            flex: 1;
+        }
+        
+        .clear-option-title {
+            font-weight: 600;
+            margin-bottom: 5px;
+            color: #333;
+        }
+        
+        .clear-option-description {
+            font-size: 0.9rem;
+            color: #666;
+        }
+        
+        .days-select {
+            margin-left: 10px;
+            padding: 4px 8px;
+            border-radius: 4px;
+            border: 1px solid #ddd;
+            background: white;
+        }
     </style>
 </head>
 <body>
@@ -720,19 +831,19 @@
     </div>
     
     <!-- Модальное окно для очистки кэша -->
-    <div id="clearCacheModal" class="hidden" style="position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center; z-index: 2000;">
-        <div style="background: white; padding: 30px; border-radius: 15px; max-width: 500px; width: 90%; box-shadow: 0 10px 30px rgba(0,0,0,0.3);">
-            <h3 style="color: #dc3545; margin-bottom: 20px;">🗑️ Очистка кэша</h3>
+    <div id="clearCacheModal" class="modal-overlay">
+        <div class="modal-content">
+            <h3 class="modal-title">🗑️ Очистка кэша</h3>
             <div style="margin-bottom: 20px;">
                 <p>Выберите тип очистки:</p>
                 <div style="margin-top: 15px;">
-                    <label style="display: flex; align-items: center; margin-bottom: 10px; cursor: pointer;">
-                        <input type="radio" name="clearType" value="old" checked style="margin-right: 10px;">
-                        <div>
-                            <strong>Очистить старый кэш</strong>
-                            <div style="font-size: 0.9rem; color: #666; margin-top: 5px;">
+                    <label class="clear-option">
+                        <input type="radio" name="clearType" value="old" checked>
+                        <div class="clear-option-details">
+                            <div class="clear-option-title">Очистить старый кэш</div>
+                            <div class="clear-option-description">
                                 Удалить записи старше: 
-                                <select id="daysOld" style="margin-left: 10px; padding: 5px 10px; border-radius: 4px; border: 1px solid #ddd;">
+                                <select id="daysOld" class="days-select">
                                     <option value="1">1 дня</option>
                                     <option value="7" selected>7 дней</option>
                                     <option value="30">30 дней</option>
@@ -741,22 +852,22 @@
                             </div>
                         </div>
                     </label>
-                    <label style="display: flex; align-items: center; cursor: pointer;">
-                        <input type="radio" name="clearType" value="all" style="margin-right: 10px;">
-                        <div>
-                            <strong>Полная очистка кэша</strong>
-                            <div style="font-size: 0.9rem; color: #666; margin-top: 5px;">
+                    <label class="clear-option">
+                        <input type="radio" name="clearType" value="all">
+                        <div class="clear-option-details">
+                            <div class="clear-option-title">Полная очистка кэша</div>
+                            <div class="clear-option-description">
                                 Удалить все записи (необратимо)
                             </div>
                         </div>
                     </label>
                 </div>
             </div>
-            <div style="display: flex; gap: 10px; margin-top: 25px;">
-                <button onclick="clearCache()" style="background: #dc3545; color: white; border: none; padding: 12px 20px; border-radius: 8px; flex: 1; font-weight: 600; cursor: pointer;">
+            <div class="modal-actions">
+                <button onclick="clearCache()" class="modal-btn modal-btn-danger">
                     🗑️ Очистить
                 </button>
-                <button onclick="hideClearCacheDialog()" style="background: #6c757d; color: white; border: none; padding: 12px 20px; border-radius: 8px; flex: 1; font-weight: 600; cursor: pointer;">
+                <button onclick="hideClearCacheDialog()" class="modal-btn modal-btn-secondary">
                     Отмена
                 </button>
             </div>
@@ -821,6 +932,20 @@
             
             languageSelect.addEventListener('change', updateModelStatus);
             speakerSelect.addEventListener('change', updateModelStatus);
+            
+            // Закрытие модального окна по клику на оверлей
+            clearCacheModal.addEventListener('click', function(event) {
+                if (event.target === clearCacheModal) {
+                    hideClearCacheDialog();
+                }
+            });
+            
+            // Закрытие модального окна по ESC
+            document.addEventListener('keydown', function(event) {
+                if (event.key === 'Escape' && clearCacheModal.classList.contains('active')) {
+                    hideClearCacheDialog();
+                }
+            });
             
             // Обновление информации каждые 30 секунд
             setInterval(() => {
@@ -1366,12 +1491,14 @@
         
         // Показать диалог очистки кэша
         function showClearCacheDialog() {
-            clearCacheModal.classList.remove('hidden');
+            clearCacheModal.classList.add('active');
+            document.body.style.overflow = 'hidden'; // Блокируем прокрутку фона
         }
         
         // Скрыть диалог очистки кэша
         function hideClearCacheDialog() {
-            clearCacheModal.classList.add('hidden');
+            clearCacheModal.classList.remove('active');
+            document.body.style.overflow = ''; // Восстанавливаем прокрутку
         }
         
         // Очистка кэша
