@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Zindaki TTS Service - Сервис озвучки текста</title>
+    <title>Zindaki TTS Service - Сервис озвучки текста с кэшированием</title>
     <style>
         * {
             margin: 0;
@@ -153,8 +153,13 @@
             background: linear-gradient(135deg, #6f42c1 0%, #a370f7 100%);
         }
         
-        button.info-btn {
+        button.cache-btn {
             background: linear-gradient(135deg, #17a2b8 0%, #20c9b8 100%);
+        }
+        
+        button.warning-btn {
+            background: linear-gradient(135deg, #ffc107 0%, #ffd54f 100%);
+            color: #333;
         }
         
         .result-container {
@@ -185,6 +190,12 @@
             background: #d4edda;
             color: #155724;
             border: 1px solid #c3e6cb;
+        }
+        
+        .status.cache-hit {
+            background: #d1ecf1;
+            color: #0c5460;
+            border: 1px solid #bee5eb;
         }
         
         .status.error {
@@ -391,13 +402,144 @@
             font-size: 0.8rem;
             margin-left: 10px;
         }
+        
+        .cache-info {
+            display: inline-block;
+            background: #6f42c1;
+            color: white;
+            padding: 3px 8px;
+            border-radius: 12px;
+            font-size: 0.8rem;
+            margin-left: 10px;
+        }
+        
+        .cache-stats {
+            background: #f8f9fa;
+            border-radius: 8px;
+            padding: 15px;
+            margin-top: 20px;
+            border: 2px solid #e9ecef;
+        }
+        
+        .cache-stats h4 {
+            margin-bottom: 10px;
+            color: #555;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 10px;
+            margin-top: 10px;
+        }
+        
+        .stat-item {
+            background: white;
+            padding: 10px;
+            border-radius: 6px;
+            text-align: center;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+        }
+        
+        .stat-value {
+            font-size: 1.2rem;
+            font-weight: 700;
+            color: #667eea;
+            margin-top: 5px;
+        }
+        
+        .stat-label {
+            font-size: 0.85rem;
+            color: #666;
+        }
+        
+        .cache-hit-badge {
+            background: #28a745;
+            color: white;
+            padding: 3px 8px;
+            border-radius: 10px;
+            font-size: 0.8rem;
+            font-weight: 600;
+            display: inline-block;
+            margin-left: 10px;
+        }
+        
+        .cache-miss-badge {
+            background: #17a2b8;
+            color: white;
+            padding: 3px 8px;
+            border-radius: 10px;
+            font-size: 0.8rem;
+            font-weight: 600;
+            display: inline-block;
+            margin-left: 10px;
+        }
+        
+        .cache-details {
+            margin-top: 15px;
+            font-size: 0.85rem;
+        }
+        
+        .cache-details table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 10px;
+        }
+        
+        .cache-details th {
+            background: #e9ecef;
+            padding: 8px;
+            text-align: left;
+            font-weight: 600;
+            color: #555;
+        }
+        
+        .cache-details td {
+            padding: 8px;
+            border-bottom: 1px solid #e9ecef;
+        }
+        
+        .cache-details tr:hover {
+            background: #f8f9fa;
+        }
+        
+        .top-phrases {
+            max-height: 200px;
+            overflow-y: auto;
+            margin-top: 10px;
+        }
+        
+        .phrase-item {
+            padding: 8px;
+            border-bottom: 1px solid #e9ecef;
+            font-size: 0.85rem;
+        }
+        
+        .phrase-item:hover {
+            background: #f8f9fa;
+        }
+        
+        .phrase-text {
+            font-weight: 500;
+            margin-bottom: 3px;
+        }
+        
+        .phrase-meta {
+            display: flex;
+            justify-content: space-between;
+            color: #666;
+            font-size: 0.8rem;
+        }
     </style>
 </head>
 <body>
     <div class="container">
         <header>
             <h1>🎵 Zindaki TTS Service</h1>
-            <p>Сервис озвучки текста для образовательных платформ</p>
+            <p>Сервис озвучки текста с интеллектуальным кэшированием</p>
         </header>
         
         <div class="main-content">
@@ -407,14 +549,14 @@
                 
                 <div class="mode-description">
                     <h4>📋 О сервисе:</h4>
-                    <p><strong>Режим работы:</strong> Синхронная генерация в отдельных потоках</p>
-                    <p>Каждый запрос обрабатывается в отдельном потоке, что позволяет обрабатывать множество запросов параллельно.</p>
+                    <p><strong>Режим работы:</strong> Синхронная генерация с кэшированием</p>
+                    <p>Повторяющиеся фразы отдаются мгновенно из кэша, новые фразы генерируются в отдельных потоках.</p>
                 </div>
                 
                 <form id="ttsForm">
                     <div class="form-group">
                         <label for="text">Текст для озвучки:</label>
-                        <textarea id="text" placeholder="Введите текст для озвучки..." required>Привет! Это демонстрация работы TTS сервиса. Сервис использует модели Silero для высококачественной синтезации речи на русском и английском языках.</textarea>
+                        <textarea id="text" placeholder="Введите текст для озвучки..." required>Привет! Это демонстрация работы TTS сервиса с кэшированием. Повторные запросы будут обрабатываться мгновенно.</textarea>
                         <div id="charCounter" class="char-counter">0/5000 символов</div>
                     </div>
                     
@@ -462,18 +604,24 @@
                             <button onclick="downloadAudio()">💾 Скачать WAV</button>
                             <button onclick="playAudio()">▶️ Воспроизвести</button>
                             <button onclick="stopAudio()">⏹️ Остановить</button>
-                            <button onclick="shareAudio()">📤 Поделиться</button>
                         </div>
                     </div>
                     <div class="spinner hidden" id="loadingSpinner"></div>
+                </div>
+                
+                <div class="cache-stats" id="liveCacheStats">
+                    <h4>📊 Живая статистика запроса</h4>
+                    <div id="requestCacheInfo" style="text-align: center; padding: 20px; color: #666;">
+                        Информация появится после запроса
+                    </div>
                 </div>
                 
                 <div class="button-group" style="margin-top: 20px;">
                     <button type="button" onclick="testAPI()" class="test-btn">
                         🧪 Тест API
                     </button>
-                    <button type="button" onclick="clearForm()" class="info-btn">
-                        🗑️ Очистить форму
+                    <button type="button" onclick="testCache()" class="cache-btn">
+                        🧪 Тест кэша
                     </button>
                 </div>
             </div>
@@ -494,43 +642,61 @@
                     </div>
                     
                     <div class="info-item">
-                        <div>Активных потоков</div>
-                        <div class="info-value" id="activeThreads">0</div>
+                        <div>Хитов кэша</div>
+                        <div class="info-value" id="cacheHits">0</div>
                     </div>
                     
                     <div class="info-item">
-                        <div>Макс. потоков</div>
-                        <div class="info-value" id="maxThreads">50</div>
+                        <div>Промахов кэша</div>
+                        <div class="info-value" id="cacheMisses">0</div>
                     </div>
                 </div>
                 
-                <h3>Доступные голосовые модели</h3>
-                <div id="voicesList" style="padding: 10px; background: #f8f9fa; border-radius: 8px; max-height: 300px; overflow-y: auto; margin-top: 10px;">
-                    <div style="text-align: center; padding: 20px;">
-                        <div class="spinner" style="width: 30px; height: 30px; border-width: 3px;"></div>
-                        <div style="margin-top: 10px;">Загрузка информации о голосах...</div>
+                <div class="cache-stats">
+                    <h4>📈 Статистика кэша</h4>
+                    <div class="stats-grid" id="cacheStatsGrid">
+                        <div class="stat-item">
+                            <div class="stat-label">Записей в кэше</div>
+                            <div class="stat-value" id="cacheEntries">0</div>
+                        </div>
+                        <div class="stat-item">
+                            <div class="stat-label">Размер кэша</div>
+                            <div class="stat-value" id="cacheSize">0 MB</div>
+                        </div>
+                        <div class="stat-item">
+                            <div class="stat-label">Коэф. попаданий</div>
+                            <div class="stat-value" id="hitRatio">0%</div>
+                        </div>
+                        <div class="stat-item">
+                            <div class="stat-label">Всего запросов</div>
+                            <div class="stat-value" id="totalRequests">0</div>
+                        </div>
+                    </div>
+                    
+                    <div class="cache-details">
+                        <div><strong>Языки в кэше:</strong> <span id="cacheLanguages">загрузка...</span></div>
+                        <div style="margin-top: 10px;"><strong>Популярные фразы:</strong></div>
+                        <div class="top-phrases" id="topPhrases">
+                            <div style="text-align: center; padding: 10px; color: #666;">
+                                Загрузка...
+                            </div>
+                        </div>
                     </div>
                 </div>
                 
-                <div class="server-info" style="margin-top: 20px;">
-                    <div><span class="label">Версия сервиса:</span> <span class="value" id="serviceVersion">4.0</span></div>
-                    <div><span class="label">Режим работы:</span> <span class="value">Threaded Sync</span></div>
-                    <div><span class="label">Время работы:</span> <span class="value" id="uptime">...</span></div>
-                </div>
-                
-                <h3 style="margin-top: 25px;">Управление</h3>
+                <h3 style="margin-top: 25px;">Управление кэшем</h3>
                 <div class="button-group">
-                    <button onclick="loadVoices()" class="info-btn">
-                        🔄 Обновить голоса
+                    <button onclick="refreshCacheStats()" class="cache-btn">
+                        🔄 Обновить статистику
                     </button>
-                    <button onclick="checkHealth()" class="info-btn">
-                        🩺 Проверить здоровье
+                    <button onclick="showClearCacheDialog()" class="warning-btn">
+                        🗑️ Очистить кэш
                     </button>
                 </div>
                 
                 <div class="button-group" style="margin-top: 15px;">
-                    <button onclick="showDebugInfo()" class="test-btn">
-                        🐛 Отладочная информация
+                    <button onclick="loadVoices()" class="cache-btn">
+                        🔊 Обновить голоса
                     </button>
                     <button onclick="loadDefaultModel()" class="generate-btn">
                         ⚡ Предзагрузить модель
@@ -538,18 +704,63 @@
                 </div>
                 
                 <div class="mode-description" style="margin-top: 20px;">
-                    <h4>📊 Мониторинг:</h4>
-                    <p>Сервис автоматически обновляет статус каждые 30 секунд.</p>
-                    <p>Информация о потоках обновляется в реальном времени.</p>
+                    <h4>ℹ️ О кэшировании:</h4>
+                    <p><strong>Хит кэша</strong> - фраза найдена в кэше, отдача мгновенная</p>
+                    <p><strong>Промах кэша</strong> - фраза не найдена, идет генерация</p>
+                    <p>Кэш автоматически очищается от старых записей (30+ дней)</p>
                 </div>
             </div>
         </div>
         
         <footer>
-            <p>Zindaki TTS Service • Сервис озвучки для образовательных платформ</p>
-            <p>API Endpoint: <code>POST /api/tts</code> • Тест: <code>GET /api/test</code> • Статус: <code>GET /api/health</code></p>
-            <p style="margin-top: 10px; font-size: 0.9rem;">Версия 4.0 • Каждый запрос в отдельном потоке</p>
+            <p>Zindaki TTS Service • Сервис озвучки с интеллектуальным кэшированием</p>
+            <p>API Endpoint: <code>POST /api/tts</code> • Кэш: <code>GET /api/cache/stats</code> • Статус: <code>GET /api/health</code></p>
+            <p style="margin-top: 10px; font-size: 0.9rem;">Версия 5.0 • Синхронная генерация с кэшированием</p>
         </footer>
+    </div>
+    
+    <!-- Модальное окно для очистки кэша -->
+    <div id="clearCacheModal" class="hidden" style="position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center; z-index: 2000;">
+        <div style="background: white; padding: 30px; border-radius: 15px; max-width: 500px; width: 90%; box-shadow: 0 10px 30px rgba(0,0,0,0.3);">
+            <h3 style="color: #dc3545; margin-bottom: 20px;">🗑️ Очистка кэша</h3>
+            <div style="margin-bottom: 20px;">
+                <p>Выберите тип очистки:</p>
+                <div style="margin-top: 15px;">
+                    <label style="display: flex; align-items: center; margin-bottom: 10px; cursor: pointer;">
+                        <input type="radio" name="clearType" value="old" checked style="margin-right: 10px;">
+                        <div>
+                            <strong>Очистить старый кэш</strong>
+                            <div style="font-size: 0.9rem; color: #666; margin-top: 5px;">
+                                Удалить записи старше: 
+                                <select id="daysOld" style="margin-left: 10px; padding: 5px 10px; border-radius: 4px; border: 1px solid #ddd;">
+                                    <option value="1">1 дня</option>
+                                    <option value="7" selected>7 дней</option>
+                                    <option value="30">30 дней</option>
+                                    <option value="90">90 дней</option>
+                                </select>
+                            </div>
+                        </div>
+                    </label>
+                    <label style="display: flex; align-items: center; cursor: pointer;">
+                        <input type="radio" name="clearType" value="all" style="margin-right: 10px;">
+                        <div>
+                            <strong>Полная очистка кэша</strong>
+                            <div style="font-size: 0.9rem; color: #666; margin-top: 5px;">
+                                Удалить все записи (необратимо)
+                            </div>
+                        </div>
+                    </label>
+                </div>
+            </div>
+            <div style="display: flex; gap: 10px; margin-top: 25px;">
+                <button onclick="clearCache()" style="background: #dc3545; color: white; border: none; padding: 12px 20px; border-radius: 8px; flex: 1; font-weight: 600; cursor: pointer;">
+                    🗑️ Очистить
+                </button>
+                <button onclick="hideClearCacheDialog()" style="background: #6c757d; color: white; border: none; padding: 12px 20px; border-radius: 8px; flex: 1; font-weight: 600; cursor: pointer;">
+                    Отмена
+                </button>
+            </div>
+        </div>
     </div>
     
     <script>
@@ -571,11 +782,16 @@
         // Элементы информации
         const serviceStatus = document.getElementById('serviceStatus');
         const modelsCount = document.getElementById('modelsCount');
-        const activeThreads = document.getElementById('activeThreads');
-        const maxThreads = document.getElementById('maxThreads');
-        const uptime = document.getElementById('uptime');
-        const voicesList = document.getElementById('voicesList');
-        const serviceVersion = document.getElementById('serviceVersion');
+        const cacheHits = document.getElementById('cacheHits');
+        const cacheMisses = document.getElementById('cacheMisses');
+        const cacheEntries = document.getElementById('cacheEntries');
+        const cacheSize = document.getElementById('cacheSize');
+        const hitRatio = document.getElementById('hitRatio');
+        const totalRequests = document.getElementById('totalRequests');
+        const cacheLanguages = document.getElementById('cacheLanguages');
+        const topPhrases = document.getElementById('topPhrases');
+        const requestCacheInfo = document.getElementById('requestCacheInfo');
+        const clearCacheModal = document.getElementById('clearCacheModal');
         
         // Текущие переменные
         let currentRequestId = null;
@@ -583,11 +799,13 @@
         let currentFilename = null;
         let generationStartTime = null;
         let progressInterval = null;
+        let isCacheHit = false;
         
         // При загрузке страницы
         document.addEventListener('DOMContentLoaded', function() {
             checkHealth();
             loadVoices();
+            refreshCacheStats();
             updateCharCounter();
             updateModelStatus();
             
@@ -607,6 +825,7 @@
             // Обновление информации каждые 30 секунд
             setInterval(() => {
                 checkHealth();
+                refreshCacheStats();
             }, 30000);
             
             // Обновление прогресса если идет генерация
@@ -690,10 +909,12 @@
                     serviceStatus.textContent = '✅ Работает';
                     serviceStatus.style.color = '#28a745';
                     modelsCount.textContent = data.models_count || 0;
-                    activeThreads.textContent = data.active_tts_threads || 0;
-                    maxThreads.textContent = data.max_concurrent_threads || 50;
-                    uptime.textContent = data.uptime ? data.uptime.split('.')[0] : 'N/A';
-                    serviceVersion.textContent = data.version || '4.0';
+                    
+                    // Обновляем статистику кэша
+                    if (data.cache_stats) {
+                        cacheHits.textContent = data.cache_stats.hits || 0;
+                        cacheMisses.textContent = data.cache_stats.misses || 0;
+                    }
                 } else {
                     serviceStatus.textContent = '❌ Ошибка';
                     serviceStatus.style.color = '#dc3545';
@@ -705,73 +926,68 @@
             }
         }
         
+        // Обновление статистики кэша
+        async function refreshCacheStats() {
+            try {
+                const response = await fetch('/api/cache/stats');
+                const data = await response.json();
+                
+                if (data.cache_enabled) {
+                    const global = data.global_stats;
+                    const details = data.cache_details;
+                    
+                    // Обновляем основные показатели
+                    cacheEntries.textContent = details.total_entries || 0;
+                    cacheSize.textContent = `${details.total_size_mb?.toFixed(1) || '0'} MB`;
+                    hitRatio.textContent = `${(global.hit_ratio * 100).toFixed(1)}%`;
+                    totalRequests.textContent = global.total_requests || 0;
+                    
+                    // Обновляем статистику языков
+                    if (details.languages_stats && details.languages_stats.length > 0) {
+                        const langs = details.languages_stats.map(lang => 
+                            `${lang.language.toUpperCase()}: ${lang.count}`
+                        ).join(', ');
+                        cacheLanguages.textContent = langs;
+                    } else {
+                        cacheLanguages.textContent = 'Нет данных';
+                    }
+                    
+                    // Обновляем популярные фразы
+                    if (details.top_phrases && details.top_phrases.length > 0) {
+                        let phrasesHtml = '';
+                        details.top_phrases.forEach((phrase, index) => {
+                            phrasesHtml += `
+                                <div class="phrase-item">
+                                    <div class="phrase-text">${phrase.text}</div>
+                                    <div class="phrase-meta">
+                                        <span>👁️ ${phrase.access_count} раз</span>
+                                        <span>⏱️ ${phrase.duration_sec?.toFixed(1) || '?'}с</span>
+                                    </div>
+                                </div>
+                            `;
+                        });
+                        topPhrases.innerHTML = phrasesHtml;
+                    } else {
+                        topPhrases.innerHTML = '<div style="text-align: center; padding: 10px; color: #666;">Нет популярных фраз</div>';
+                    }
+                }
+            } catch (error) {
+                console.error('Ошибка обновления статистики кэша:', error);
+            }
+        }
+        
         // Загрузка списка голосов
         async function loadVoices() {
             try {
-                voicesList.innerHTML = `
-                    <div style="text-align: center; padding: 10px;">
-                        <div class="spinner" style="width: 20px; height: 20px; border-width: 2px; display: inline-block;"></div>
-                        <div style="margin-top: 5px; font-size: 0.9em;">Загрузка...</div>
-                    </div>
-                `;
-                
                 const response = await fetch('/api/voices');
                 const data = await response.json();
                 
-                let voicesHtml = '';
-                
-                if (data.all_voices && data.all_voices.ru) {
-                    voicesHtml += '<h4 style="margin-bottom: 10px; color: #555;">🇷🇺 Русские голоса:</h4>';
-                    data.all_voices.ru.forEach(voice => {
-                        const isLoaded = data.loaded_voices?.ru?.some(v => v.id === voice.id) || false;
-                        voicesHtml += `
-                            <div style="margin: 8px 0; padding: 10px; background: ${isLoaded ? '#d4edda' : '#f8d7da'}; border-radius: 6px; border-left: 4px solid ${isLoaded ? '#28a745' : '#dc3545'};">
-                                <div style="font-weight: 600;">${voice.name}</div>
-                                <div style="font-size: 0.9em; color: #666;">ID: <code>${voice.id}</code> • ${voice.description}</div>
-                                <div style="font-size: 0.85em; margin-top: 5px; color: #555;">
-                                    Частота: ${voice.sample_rate}Hz • Фактический: ${voice.actual}
-                                </div>
-                                <div style="font-size: 0.8em; margin-top: 5px; text-align: right;">
-                                    <span style="background: ${isLoaded ? '#28a745' : '#dc3545'}; color: white; padding: 2px 8px; border-radius: 10px;">
-                                        ${isLoaded ? '✅ Загружен' : '❌ Не загружен'}
-                                    </span>
-                                </div>
-                            </div>
-                        `;
-                    });
-                }
-                
-                if (data.all_voices && data.all_voices.en) {
-                    voicesHtml += '<h4 style="margin-top: 20px; margin-bottom: 10px; color: #555;">🇬🇧 Английские голоса:</h4>';
-                    data.all_voices.en.forEach(voice => {
-                        const isLoaded = data.loaded_voices?.en?.some(v => v.id === voice.id) || false;
-                        voicesHtml += `
-                            <div style="margin: 8px 0; padding: 10px; background: ${isLoaded ? '#d4edda' : '#f8d7da'}; border-radius: 6px; border-left: 4px solid ${isLoaded ? '#28a745' : '#dc3545'};">
-                                <div style="font-weight: 600;">${voice.name}</div>
-                                <div style="font-size: 0.9em; color: #666;">ID: <code>${voice.id}</code> • ${voice.description}</div>
-                                <div style="font-size: 0.85em; margin-top: 5px; color: #555;">
-                                    Sample rate: ${voice.sample_rate}Hz • Actual: ${voice.actual}
-                                </div>
-                                <div style="font-size: 0.8em; margin-top: 5px; text-align: right;">
-                                    <span style="background: ${isLoaded ? '#28a745' : '#dc3545'}; color: white; padding: 2px 8px; border-radius: 10px;">
-                                        ${isLoaded ? '✅ Loaded' : '❌ Not loaded'}
-                                    </span>
-                                </div>
-                            </div>
-                        `;
-                    });
-                }
-                
-                voicesList.innerHTML = voicesHtml;
+                // Просто обновляем статистику
+                refreshCacheStats();
+                showAlert('Список голосов обновлен', 'info');
                 
             } catch (error) {
-                voicesList.innerHTML = `
-                    <div style="color: #dc3545; padding: 10px; text-align: center;">
-                        <div>❌ Ошибка загрузки голосов</div>
-                        <div style="font-size: 0.8em; margin-top: 5px;">${error.message}</div>
-                    </div>
-                `;
-                console.error('Ошибка загрузки голосов:', error);
+                showAlert(`Ошибка загрузки голосов: ${error.message}`, 'error');
             }
         }
         
@@ -799,15 +1015,24 @@
             progressBar.classList.remove('hidden');
             progressFill.style.width = '0%';
             
+            // Сбрасываем информацию о кэше для этого запроса
+            isCacheHit = false;
+            requestCacheInfo.innerHTML = `
+                <div style="text-align: center;">
+                    <div class="spinner" style="width: 20px; height: 20px; border-width: 2px; display: inline-block;"></div>
+                    <div style="margin-top: 10px; color: #666;">Проверка кэша...</div>
+                </div>
+            `;
+            
             // Обновляем статус
-            statusDiv.innerHTML = '<span>⚡ Генерация аудио...</span><span class="thread-info">ПОТОК</span>';
+            statusDiv.innerHTML = '<span>🔍 Проверка кэша...</span><span class="cache-info">КЭШ</span>';
             statusDiv.className = 'status processing';
             resultInfo.textContent = `Текст: ${text.substring(0, 50)}${text.length > 50 ? '...' : ''}`;
             serverInfo.classList.add('hidden');
             
             // Блокируем кнопку
             generateBtn.disabled = true;
-            generateBtn.textContent = '⏳ Генерация...';
+            generateBtn.textContent = '⏳ Проверка кэша...';
             
             // Запоминаем время начала
             generationStartTime = Date.now();
@@ -835,6 +1060,45 @@
                 progressFill.style.width = '100%';
                 
                 if (response.status === 200) {
+                    // Получаем заголовки кэша
+                    const cacheHit = response.headers.get('X-Cache-Hit') === 'true';
+                    const generationTime = response.headers.get('X-Generation-Time') || '0';
+                    
+                    // Обновляем информацию о кэше для этого запроса
+                    isCacheHit = cacheHit;
+                    
+                    if (cacheHit) {
+                        requestCacheInfo.innerHTML = `
+                            <div style="background: #d4edda; color: #155724; padding: 10px; border-radius: 6px; text-align: center;">
+                                <div style="font-weight: 600; font-size: 1.1rem;">✅ ХИТ КЭША</div>
+                                <div style="margin-top: 5px; font-size: 0.9em;">
+                                    Аудио найдено в кэше, отдача мгновенная
+                                </div>
+                                <div style="margin-top: 5px; font-size: 0.8em; color: #666;">
+                                    Время обработки: &lt; 0.1с
+                                </div>
+                            </div>
+                        `;
+                        
+                        statusDiv.innerHTML = '<span>✅ Аудио готово!</span><span class="cache-info">КЭШ ХИТ</span>';
+                        statusDiv.className = 'status cache-hit';
+                    } else {
+                        requestCacheInfo.innerHTML = `
+                            <div style="background: #cce5ff; color: #004085; padding: 10px; border-radius: 6px; text-align: center;">
+                                <div style="font-weight: 600; font-size: 1.1rem;">🔄 ПРОМАХ КЭША</div>
+                                <div style="margin-top: 5px; font-size: 0.9em;">
+                                    Аудио сгенерировано и добавлено в кэш
+                                </div>
+                                <div style="margin-top: 5px; font-size: 0.8em; color: #666;">
+                                    Время генерации: ${parseFloat(generationTime).toFixed(2)}с
+                                </div>
+                            </div>
+                        `;
+                        
+                        statusDiv.innerHTML = '<span>✅ Аудио готово!</span><span class="thread-info">НОВАЯ ГЕНЕРАЦИЯ</span>';
+                        statusDiv.className = 'status success';
+                    }
+                    
                     // Получаем аудио файл
                     const audioBlob = await response.blob();
                     
@@ -851,16 +1115,19 @@
                     audioContainer.classList.remove('hidden');
                     loadingSpinner.classList.add('hidden');
                     
-                    statusDiv.innerHTML = '<span>✅ Аудио готово!</span><span class="thread-info">ГОТОВО</span>';
-                    statusDiv.className = 'status success';
-                    
                     const fileSize = (audioBlob.size / 1024).toFixed(1);
-                    const generationTime = ((Date.now() - generationStartTime) / 1000).toFixed(1);
+                    const totalTime = ((Date.now() - generationStartTime) / 1000).toFixed(1);
                     
                     resultInfo.innerHTML = `
-                        <div>✅ Аудио успешно сгенерировано за ${generationTime} секунд</div>
+                        <div>✅ Аудио успешно получено за ${totalTime} секунд</div>
                         <div style="margin-top: 5px; font-size: 0.9em;">
                             Размер файла: ${fileSize} KB • Формат: WAV 16kHz
+                            <div style="margin-top: 3px;">
+                                ${cacheHit ? 
+                                    '<span class="cache-hit-badge">ИЗ КЭША</span>' : 
+                                    '<span class="cache-miss-badge">НОВАЯ ГЕНЕРАЦИЯ</span>'
+                                }
+                            </div>
                         </div>
                     `;
                     
@@ -870,6 +1137,7 @@
                         <div><span class="label">Модель:</span> <span class="value">${language}_${speaker}</span></div>
                         <div><span class="label">Активных потоков:</span> <span class="value">${healthData.active_tts_threads || 0}</span></div>
                         <div><span class="label">Загружено моделей:</span> <span class="value">${healthData.models_count || 0}</span></div>
+                        <div><span class="label">Хитов/Промахов:</span> <span class="value">${healthData.cache_stats?.hits || 0}/${healthData.cache_stats?.misses || 0}</span></div>
                     `;
                     serverInfo.classList.remove('hidden');
                     
@@ -880,7 +1148,11 @@
                         });
                     }, 300);
                     
-                    showAlert(`Аудио успешно сгенерировано! Время: ${generationTime}с`, 'success');
+                    if (cacheHit) {
+                        showAlert(`✅ Аудио найдено в кэше! Отдача мгновенная`, 'success');
+                    } else {
+                        showAlert(`🔄 Аудио сгенерировано за ${parseFloat(generationTime).toFixed(2)}с и добавлено в кэш`, 'success');
+                    }
                     
                 } else if (response.status === 429) {
                     const errorData = await response.json();
@@ -899,6 +1171,12 @@
                 resultInfo.textContent = error.message;
                 loadingSpinner.classList.add('hidden');
                 progressBar.classList.add('hidden');
+                requestCacheInfo.innerHTML = `
+                    <div style="background: #f8d7da; color: #721c24; padding: 10px; border-radius: 6px; text-align: center;">
+                        <div style="font-weight: 600;">❌ Ошибка обработки</div>
+                        <div style="margin-top: 5px; font-size: 0.9em;">${error.message}</div>
+                    </div>
+                `;
                 showAlert(`Ошибка генерации: ${error.message}`, 'error');
             } finally {
                 // Разблокируем кнопку
@@ -910,8 +1188,9 @@
                 clearInterval(progressInterval);
                 progressInterval = null;
                 
-                // Обновляем статус сервиса
+                // Обновляем статус сервиса и статистику кэша
                 checkHealth();
+                refreshCacheStats();
                 updateModelStatus();
             }
         }
@@ -925,17 +1204,25 @@
             
             // Показываем прошедшее время
             const seconds = Math.floor(elapsed / 1000);
-            statusDiv.innerHTML = `<span>⚡ Генерация аудио... (${seconds}с)</span><span class="thread-info">ПОТОК</span>`;
             
-            // Обновляем прогресс-бар (но не до 100%, чтобы показать что процесс идет)
-            let progress = Math.min((elapsed / maxTime) * 100, 95);
-            progressFill.style.width = `${progress}%`;
-            
-            // Если прошло больше 55 секунд, показываем предупреждение
-            if (elapsed > 55000) {
-                progressFill.style.background = 'linear-gradient(90deg, #ffc107, #ff9800)';
-                if (elapsed > 58000) {
-                    progressFill.style.background = 'linear-gradient(90deg, #dc3545, #e4606d)';
+            if (isCacheHit) {
+                // Для кэш-хита показываем быстрый прогресс
+                statusDiv.innerHTML = `<span>⚡ Отдача из кэша...</span><span class="cache-info">КЭШ</span>`;
+                progressFill.style.width = `${Math.min((elapsed / 2000) * 100, 100)}%`;
+            } else {
+                // Для новой генерации обычный прогресс
+                statusDiv.innerHTML = `<span>⚡ Генерация аудио... (${seconds}с)</span><span class="thread-info">ГЕНЕРАЦИЯ</span>`;
+                
+                // Обновляем прогресс-бар (но не до 100%, чтобы показать что процесс идет)
+                let progress = Math.min((elapsed / maxTime) * 100, 95);
+                progressFill.style.width = `${progress}%`;
+                
+                // Если прошло больше 55 секунд, показываем предупреждение
+                if (elapsed > 55000) {
+                    progressFill.style.background = 'linear-gradient(90deg, #ffc107, #ff9800)';
+                    if (elapsed > 58000) {
+                        progressFill.style.background = 'linear-gradient(90deg, #dc3545, #e4606d)';
+                    }
                 }
             }
         }
@@ -956,6 +1243,7 @@
             currentRequestId = null;
             currentFilename = null;
             generationStartTime = null;
+            isCacheHit = false;
         }
         
         // Воспроизведение аудио
@@ -993,26 +1281,6 @@
             showAlert('Аудио скачивается...', 'success', 1500);
         }
         
-        // Поделиться аудио
-        function shareAudio() {
-            if (!audioPlayer.src) {
-                showAlert('Аудио не загружено', 'warning');
-                return;
-            }
-            
-            if (navigator.share) {
-                navigator.share({
-                    title: 'Сгенерированное аудио TTS',
-                    text: 'Аудио сгенерировано с помощью Zindaki TTS Service',
-                    url: audioPlayer.src
-                }).catch(e => {
-                    console.log('Пользователь отменил шаринг:', e);
-                });
-            } else {
-                showAlert('Функция "Поделиться" недоступна в вашем браузере', 'info');
-            }
-        }
-        
         // Тест API
         async function testAPI() {
             try {
@@ -1022,7 +1290,8 @@
                 const data = await response.json();
                 
                 if (data.success) {
-                    showAlert(`✅ Тест пройден! Тип результата: ${data.result_type}`, 'success');
+                    showAlert(`✅ Тест пройден! Кэширование: ${data.tts_cache_enabled ? 'включено' : 'выключено'}`, 'success');
+                    refreshCacheStats();
                 } else {
                     showAlert(`❌ Тест не пройден: ${data.error}`, 'error');
                 }
@@ -1031,34 +1300,119 @@
             }
         }
         
-        // Очистка формы
-        function clearForm() {
-            document.getElementById('text').value = '';
-            updateCharCounter();
-            resetResultContainer();
-            resultContainer.classList.add('hidden');
-            showAlert('Форма очищена', 'info');
+        // Тест кэша (многократный запрос одной фразы)
+        async function testCache() {
+            try {
+                const testText = "Тестовая фраза для проверки кэширования.";
+                
+                showAlert('Запуск теста кэша... Первый запрос будет медленным, последующие - мгновенными.', 'info');
+                
+                // Первый запрос (должен быть промах)
+                const startTime1 = Date.now();
+                const response1 = await fetch('/api/tts', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        text: testText,
+                        language: 'ru',
+                        speaker: 'baya',
+                        sample_rate: 16000
+                    })
+                });
+                const time1 = Date.now() - startTime1;
+                
+                if (!response1.ok) {
+                    throw new Error('Первый запрос не удался');
+                }
+                
+                // Второй запрос (должен быть хит)
+                const startTime2 = Date.now();
+                const response2 = await fetch('/api/tts', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        text: testText,
+                        language: 'ru',
+                        speaker: 'baya',
+                        sample_rate: 16000
+                    })
+                });
+                const time2 = Date.now() - startTime2;
+                
+                if (!response2.ok) {
+                    throw new Error('Второй запрос не удался');
+                }
+                
+                // Обновляем статистику
+                refreshCacheStats();
+                
+                showAlert(
+                    `✅ Тест кэша пройден!<br>` +
+                    `Первый запрос: ${time1}ms (промах)<br>` +
+                    `Второй запрос: ${time2}ms (хит)<br>` +
+                    `Ускорение: ${(time1 / Math.max(time2, 1)).toFixed(1)}x`,
+                    'success',
+                    5000
+                );
+                
+            } catch (error) {
+                showAlert(`❌ Ошибка теста кэша: ${error.message}`, 'error');
+            }
         }
         
-        // Показать отладочную информацию
-        async function showDebugInfo() {
+        // Показать диалог очистки кэша
+        function showClearCacheDialog() {
+            clearCacheModal.classList.remove('hidden');
+        }
+        
+        // Скрыть диалог очистки кэша
+        function hideClearCacheDialog() {
+            clearCacheModal.classList.add('hidden');
+        }
+        
+        // Очистка кэша
+        async function clearCache() {
             try {
-                const response = await fetch('/api/debug');
+                const clearType = document.querySelector('input[name="clearType"]:checked').value;
+                const daysOld = document.getElementById('daysOld').value;
+                
+                hideClearCacheDialog();
+                
+                let url = '/api/cache/clear';
+                let body = {};
+                
+                if (clearType === 'old') {
+                    body = { days_old: parseInt(daysOld) };
+                    showAlert(`Очистка кэша старше ${daysOld} дней...`, 'info');
+                } else {
+                    body = { clear_all: true };
+                    showAlert('Полная очистка кэша...', 'warning');
+                }
+                
+                const response = await fetch(url, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify(body)
+                });
+                
                 const data = await response.json();
                 
-                const debugInfo = `
-                    <strong>PyTorch:</strong> ${data.torch_version}<br>
-                    <strong>TorchAudio:</strong> ${data.torchaudio_version}<br>
-                    <strong>Активных потоков:</strong> ${data.active_threads}<br>
-                    <strong>Потоков TTS:</strong> ${data.active_tts_threads}<br>
-                    <strong>Моделей загружено:</strong> ${data.models_loaded ? data.models_loaded.length : 0}<br>
-                    <strong>Временных файлов:</strong> ${data.temp_files_count}<br>
-                    <strong>Макс. потоков:</strong> ${data.max_concurrent_threads}
-                `;
+                if (data.success) {
+                    showAlert(`✅ Кэш очищен! Удалено ${data.deleted_count} записей`, 'success');
+                    refreshCacheStats();
+                    checkHealth();
+                } else {
+                    throw new Error(data.error || 'Ошибка очистки');
+                }
                 
-                showAlert(`Отладочная информация: ${debugInfo}`, 'info', 5000);
             } catch (error) {
-                showAlert(`Ошибка получения отладочной информации: ${error.message}`, 'error');
+                showAlert(`❌ Ошибка очистки кэша: ${error.message}`, 'error');
             }
         }
         
@@ -1087,9 +1441,6 @@
                 showAlert(`❌ Ошибка загрузки модели: ${error.message}`, 'error');
             }
         }
-        
-        // Обновление статуса сервиса
-        setInterval(checkHealth, 10000);
     </script>
 </body>
 </html>
