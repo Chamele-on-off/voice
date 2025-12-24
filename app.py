@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-ZINDAKI TTS SERVICE - Упрощенная версия с потоками
-Каждый запрос запускает синхронную генерацию в отдельном потоке
+ZINDAKI TTS SERVICE - Версия с кэшированием фраз
+Каждый запрос проверяется в кэше перед генерацией
 """
 
 import os
@@ -11,7 +11,7 @@ import torchaudio
 import tempfile
 import time
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
 from flask import Flask, request, jsonify, send_file, render_template
 from flask_cors import CORS
 from pydantic import BaseModel, ValidationError
@@ -19,6 +19,10 @@ import threading
 import atexit
 import uuid
 import logging
+import hashlib
+import sqlite3
+import shutil
+from pathlib import Path
 
 # Настройка логирования
 logging.basicConfig(
@@ -35,6 +39,8 @@ os.environ['XDG_CACHE_HOME'] = '/app/cache'
 # Создаем необходимые директории
 os.makedirs('/app/cache/torch/hub', exist_ok=True)
 os.makedirs('/app/temp_audio', exist_ok=True)
+os.makedirs('/app/tts_cache/audio', exist_ok=True)
+os.makedirs('/app/tts_cache/db', exist_ok=True)
 
 # ========== НАСТРОЙКА FLASK ==========
 app = Flask(__name__, template_folder='templates')
@@ -43,8 +49,9 @@ CORS(app, resources={r"/*": {"origins": "*"}})
 # ========== ГЛОБАЛЬНЫЕ ПЕРЕМЕННЫЕ ==========
 tts_models = {}
 startup_time = datetime.now()
-active_threads = {}
-max_concurrent_threads = 50  # Максимальное количество одновременных потоков
+max_concurrent_threads = 50
+cache_hits = 0
+cache_misses = 0
 
 # ========== КОРРЕКТНЫЕ ИМЕНА ДИКТОРОВ SILERO ==========
 SPEAKER_MAPPING = {
@@ -72,6 +79,309 @@ class TTSRequest(BaseModel):
     
     class Config:
         extra = 'forbid'
+
+# ========== КЭШ TTS ==========
+class TTSCache:
+    """Кэш для TTS фраз с использованием SQLite"""
+    
+    def __init__(self):
+        self.cache_dir = '/app/tts_cache'
+        self.audio_dir = os.path.join(self.cache_dir, 'audio')
+        self.db_path = os.path.join(self.cache_dir, 'db', 'tts_cache.db')
+        
+        # Создаем директории если не существуют
+        os.makedirs(self.audio_dir, exist_ok=True)
+        os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
+        
+        self._init_database()
+        self.max_cache_size_mb = 1024  # 1 GB максимальный размер кэша
+        self.cache_ttl_days = 30  # Храним 30 дней
+        
+        logger.info(f"✅ Кэш инициализирован: {self.db_path}")
+    
+    def _init_database(self):
+        """Инициализация базы данных SQLite"""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        
+        # Создаем таблицу если не существует
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS tts_cache (
+                cache_key TEXT PRIMARY KEY,
+                text_hash TEXT NOT NULL,
+                text TEXT NOT NULL,
+                language TEXT NOT NULL,
+                speaker TEXT NOT NULL,
+                sample_rate INTEGER NOT NULL,
+                file_path TEXT NOT NULL,
+                file_size INTEGER NOT NULL,
+                duration_sec REAL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                last_accessed TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                access_count INTEGER DEFAULT 0,
+                generation_time REAL
+            )
+        ''')
+        
+        # Создаем индексы для быстрого поиска
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_text_hash ON tts_cache(text_hash, language, speaker)')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_last_accessed ON tts_cache(last_accessed)')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_created_at ON tts_cache(created_at)')
+        
+        conn.commit()
+        conn.close()
+    
+    def _generate_cache_key(self, text, language, speaker, sample_rate):
+        """Генерация уникального ключа для кэша"""
+        # Нормализуем текст: убираем лишние пробелы, приводим к нижнему регистру
+        normalized_text = ' '.join(text.strip().split()).lower()
+        
+        # Создаем хеш из текста и параметров
+        text_hash = hashlib.md5(normalized_text.encode('utf-8')).hexdigest()
+        params_hash = hashlib.md5(f"{language}_{speaker}_{sample_rate}".encode('utf-8')).hexdigest()
+        
+        return f"{text_hash}_{params_hash}"
+    
+    def _generate_text_hash(self, text):
+        """Генерация хеша только для текста"""
+        normalized_text = ' '.join(text.strip().split()).lower()
+        return hashlib.md5(normalized_text.encode('utf-8')).hexdigest()
+    
+    def get(self, text, language, speaker, sample_rate):
+        """Получение аудио из кэша"""
+        cache_key = self._generate_cache_key(text, language, speaker, sample_rate)
+        text_hash = self._generate_text_hash(text)
+        
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        
+        try:
+            cursor.execute('''
+                SELECT file_path, duration_sec, generation_time 
+                FROM tts_cache 
+                WHERE cache_key = ? OR (text_hash = ? AND language = ? AND speaker = ? AND sample_rate = ?)
+                LIMIT 1
+            ''', (cache_key, text_hash, language, speaker, sample_rate))
+            
+            result = cursor.fetchone()
+            
+            if result:
+                file_path, duration_sec, generation_time = result
+                
+                # Проверяем существование файла
+                if os.path.exists(file_path):
+                    # Обновляем статистику доступа
+                    cursor.execute('''
+                        UPDATE tts_cache 
+                        SET last_accessed = CURRENT_TIMESTAMP, 
+                            access_count = access_count + 1
+                        WHERE cache_key = ?
+                    ''', (cache_key,))
+                    conn.commit()
+                    
+                    logger.info(f"✅ Кэш хит: {text[:50]}...")
+                    return {
+                        'hit': True,
+                        'file_path': file_path,
+                        'duration_sec': duration_sec,
+                        'generation_time': generation_time,
+                        'cached': True
+                    }
+        
+        except Exception as e:
+            logger.error(f"❌ Ошибка при получении из кэша: {e}")
+        finally:
+            conn.close()
+        
+        return {'hit': False}
+    
+    def put(self, text, language, speaker, sample_rate, audio_filepath, generation_time):
+        """Добавление аудио в кэш"""
+        cache_key = self._generate_cache_key(text, language, speaker, sample_rate)
+        text_hash = self._generate_text_hash(text)
+        
+        # Создаем уникальное имя файла в кэше
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        cache_filename = f"{cache_key}_{timestamp}.wav"
+        cache_filepath = os.path.join(self.audio_dir, cache_filename)
+        
+        try:
+            # Копируем файл в кэш
+            shutil.copy2(audio_filepath, cache_filepath)
+            file_size = os.path.getsize(cache_filepath)
+            
+            # Пытаемся определить длительность аудио
+            duration_sec = 0
+            try:
+                info = torchaudio.info(cache_filepath)
+                duration_sec = info.num_frames / info.sample_rate
+            except:
+                pass
+            
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            
+            # Вставляем или заменяем запись
+            cursor.execute('''
+                INSERT OR REPLACE INTO tts_cache 
+                (cache_key, text_hash, text, language, speaker, sample_rate, 
+                 file_path, file_size, duration_sec, generation_time, 
+                 created_at, last_accessed, access_count)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, 1)
+            ''', (cache_key, text_hash, text[:1000], language, speaker, sample_rate,
+                  cache_filepath, file_size, duration_sec, generation_time))
+            
+            conn.commit()
+            conn.close()
+            
+            logger.info(f"✅ Добавлено в кэш: {text[:50]}... (ключ: {cache_key[:16]}...)")
+            
+            # Очищаем старый кэш если нужно
+            self._cleanup_old_cache()
+            
+            return cache_filepath
+            
+        except Exception as e:
+            logger.error(f"❌ Ошибка при добавлении в кэш: {e}")
+            return None
+    
+    def _cleanup_old_cache(self):
+        """Очистка старого кэша"""
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            
+            # 1. Удаляем записи старше TTL
+            cutoff_date = datetime.now() - timedelta(days=self.cache_ttl_days)
+            cursor.execute('''
+                SELECT cache_key, file_path FROM tts_cache 
+                WHERE created_at < ?
+            ''', (cutoff_date.isoformat(),))
+            
+            old_records = cursor.fetchall()
+            for cache_key, file_path in old_records:
+                try:
+                    if os.path.exists(file_path):
+                        os.remove(file_path)
+                    cursor.execute('DELETE FROM tts_cache WHERE cache_key = ?', (cache_key,))
+                    logger.debug(f"🗑️ Удален старый кэш: {cache_key[:16]}...")
+                except Exception as e:
+                    logger.warning(f"⚠️ Ошибка удаления старого кэша: {e}")
+            
+            conn.commit()
+            
+            # 2. Проверяем общий размер кэша
+            cursor.execute('SELECT SUM(file_size) FROM tts_cache')
+            total_size_bytes = cursor.fetchone()[0] or 0
+            total_size_mb = total_size_bytes / (1024 * 1024)
+            
+            if total_size_mb > self.max_cache_size_mb:
+                logger.info(f"📊 Размер кэша: {total_size_mb:.1f} MB (макс: {self.max_cache_size_mb} MB)")
+                
+                # Удаляем наименее используемые записи
+                cursor.execute('''
+                    SELECT cache_key, file_path, access_count, last_accessed 
+                    FROM tts_cache 
+                    ORDER BY access_count ASC, last_accessed ASC
+                ''')
+                
+                for cache_key, file_path, access_count, last_accessed in cursor.fetchall():
+                    try:
+                        if os.path.exists(file_path):
+                            os.remove(file_path)
+                        cursor.execute('DELETE FROM tts_cache WHERE cache_key = ?', (cache_key,))
+                        logger.debug(f"🗑️ Удален редко используемый кэш: {cache_key[:16]}... (использований: {access_count})")
+                    except Exception as e:
+                        logger.warning(f"⚠️ Ошибка удаления кэша: {e}")
+                    
+                    # Перепроверяем размер
+                    cursor.execute('SELECT SUM(file_size) FROM tts_cache')
+                    total_size_bytes = cursor.fetchone()[0] or 0
+                    total_size_mb = total_size_bytes / (1024 * 1024)
+                    
+                    if total_size_mb <= self.max_cache_size_mb * 0.8:
+                        break
+            
+            conn.commit()
+            conn.close()
+            
+        except Exception as e:
+            logger.error(f"❌ Ошибка очистки кэша: {e}")
+    
+    def get_stats(self):
+        """Получение статистики кэша"""
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            
+            # Общая статистика
+            cursor.execute('SELECT COUNT(*) FROM tts_cache')
+            total_entries = cursor.fetchone()[0]
+            
+            cursor.execute('SELECT SUM(file_size) FROM tts_cache')
+            total_size_bytes = cursor.fetchone()[0] or 0
+            
+            cursor.execute('SELECT SUM(access_count) FROM tts_cache')
+            total_accesses = cursor.fetchone()[0] or 0
+            
+            # Статистика по языкам
+            cursor.execute('''
+                SELECT language, COUNT(*), SUM(access_count), SUM(file_size)
+                FROM tts_cache 
+                GROUP BY language
+            ''')
+            languages_stats = cursor.fetchall()
+            
+            # Самые популярные фразы
+            cursor.execute('''
+                SELECT text, access_count, duration_sec 
+                FROM tts_cache 
+                ORDER BY access_count DESC 
+                LIMIT 10
+            ''')
+            top_phrases = cursor.fetchall()
+            
+            # Старые записи
+            cursor.execute('''
+                SELECT COUNT(*) FROM tts_cache 
+                WHERE created_at < ?
+            ''', ((datetime.now() - timedelta(days=self.cache_ttl_days)).isoformat(),))
+            old_entries = cursor.fetchone()[0]
+            
+            conn.close()
+            
+            return {
+                'total_entries': total_entries,
+                'total_size_mb': total_size_bytes / (1024 * 1024),
+                'total_accesses': total_accesses,
+                'languages_stats': [
+                    {
+                        'language': lang,
+                        'count': count,
+                        'accesses': accesses,
+                        'size_mb': size / (1024 * 1024) if size else 0
+                    }
+                    for lang, count, accesses, size in languages_stats
+                ],
+                'top_phrases': [
+                    {
+                        'text': text[:100] + ('...' if len(text) > 100 else ''),
+                        'access_count': access_count,
+                        'duration_sec': duration_sec
+                    }
+                    for text, access_count, duration_sec in top_phrases
+                ],
+                'old_entries': old_entries,
+                'max_size_mb': self.max_cache_size_mb,
+                'ttl_days': self.cache_ttl_days
+            }
+            
+        except Exception as e:
+            logger.error(f"❌ Ошибка получения статистики кэша: {e}")
+            return {}
+
+# Инициализируем кэш
+tts_cache = TTSCache()
 
 # ========== ФУНКЦИЯ ЗАГРУЗКИ МОДЕЛИ ==========
 def load_tts_model(language='ru', user_speaker='baya'):
@@ -208,7 +518,12 @@ def generate_audio(text, language, speaker, sample_rate, request_id):
         logger.info(f"✅ [Request {request_id}] Аудио успешно сгенерировано за {generation_time:.2f} секунд")
         logger.info(f"   📁 Файл: {filename}")
         
-        return filepath
+        # Добавляем в кэш
+        cache_result = tts_cache.put(text, language, speaker, sample_rate, filepath, generation_time)
+        if cache_result:
+            logger.info(f"✅ [Request {request_id}] Добавлено в кэш")
+        
+        return filepath, generation_time
         
     except Exception as e:
         logger.error(f"❌ [Request {request_id}] Ошибка генерации аудио: {str(e)}")
@@ -222,15 +537,44 @@ def process_tts_request(text, language, speaker, sample_rate, request_id, callba
     try:
         logger.info(f"🧵 [Thread-{request_id}] Запуск обработки запроса")
         
-        # Генерируем аудио
-        filepath = generate_audio(text, language, speaker, sample_rate, request_id)
+        # Сначала проверяем кэш
+        cache_result = tts_cache.get(text, language, speaker, sample_rate)
+        
+        if cache_result['hit']:
+            logger.info(f"✅ [Request {request_id}] Найдено в кэше!")
+            
+            # Глобальная статистика
+            global cache_hits
+            cache_hits += 1
+            
+            callback({
+                'success': True,
+                'filepath': cache_result['file_path'],
+                'request_id': request_id,
+                'filename': os.path.basename(cache_result['file_path']),
+                'cached': True,
+                'generation_time': cache_result.get('generation_time', 0),
+                'cache_hit': True
+            })
+            return
+        
+        # Если не в кэше - генерируем
+        logger.info(f"🔄 [Request {request_id}] Не найдено в кэше, генерирую...")
+        
+        global cache_misses
+        cache_misses += 1
+        
+        filepath, generation_time = generate_audio(text, language, speaker, sample_rate, request_id)
         
         # Вызываем колбэк с результатом
         callback({
             'success': True,
             'filepath': filepath,
             'request_id': request_id,
-            'filename': os.path.basename(filepath)
+            'filename': os.path.basename(filepath),
+            'cached': False,
+            'generation_time': generation_time,
+            'cache_hit': False
         })
         
     except Exception as e:
@@ -252,15 +596,18 @@ def index():
         logger.warning(f"⚠️ Шаблон index.html не найден: {e}")
         return jsonify({
             'service': 'Zindaki TTS Service',
-            'version': '4.0',
+            'version': '5.0',
             'status': 'running',
-            'mode': 'threaded-sync-simple',
-            'description': 'Каждый запрос обрабатывается в отдельном потоке',
+            'mode': 'threaded-sync-with-cache',
+            'description': 'Каждый запрос обрабатывается в отдельном потоке с кэшированием',
+            'cache_enabled': True,
             'endpoints': {
                 '/': 'GET - главная страница',
-                '/api/tts': 'POST - генерация TTS (синхронно в потоке)',
+                '/api/tts': 'POST - генерация TTS (с кэшированием)',
                 '/api/health': 'GET - проверка здоровья',
                 '/api/voices': 'GET - список голосов',
+                '/api/cache/stats': 'GET - статистика кэша',
+                '/api/cache/clear': 'POST - очистка кэша',
                 '/api/test': 'GET - тестовый запрос',
                 '/api/debug': 'GET - отладочная информация'
             }
@@ -269,7 +616,7 @@ def index():
 @app.route('/api/tts', methods=['POST'])
 def tts_request():
     """
-    Генерация TTS - синхронная обработка в отдельном потоке
+    Генерация TTS - с проверкой кэша
     """
     try:
         # Получаем и валидируем данные
@@ -354,6 +701,13 @@ def tts_request():
         
         logger.info(f"📤 [Request {request_id}] Отправляю файл: {filename}")
         
+        # Статистика кэша для ответа
+        cache_stats = f"Cache: {'HIT' if result.get('cache_hit') else 'MISS'}"
+        if not result.get('cache_hit'):
+            cache_stats += f", Generation time: {result.get('generation_time', 0):.2f}s"
+        
+        logger.info(f"📊 [Request {request_id}] {cache_stats}")
+        
         # Отправляем файл
         response = send_file(
             filepath,
@@ -362,15 +716,21 @@ def tts_request():
             download_name=filename
         )
         
-        # Очистка файла после отправки
-        @response.call_on_close
-        def cleanup():
-            try:
-                if os.path.exists(filepath):
-                    os.remove(filepath)
-                    logger.info(f"🗑️ Удален временный файл: {filepath}")
-            except Exception as e:
-                logger.error(f"⚠️ Ошибка удаления файла: {e}")
+        # Добавляем заголовки с информацией о кэше
+        response.headers['X-Cache-Hit'] = 'true' if result.get('cache_hit') else 'false'
+        response.headers['X-Generation-Time'] = f"{result.get('generation_time', 0):.2f}"
+        response.headers['X-Cache-Stats'] = f"Hits: {cache_hits}, Misses: {cache_misses}"
+        
+        # Очистка файла после отправки (только для временных файлов, не кэшированных)
+        if not result.get('cached'):
+            @response.call_on_close
+            def cleanup():
+                try:
+                    if os.path.exists(filepath):
+                        os.remove(filepath)
+                        logger.info(f"🗑️ Удален временный файл: {filepath}")
+                except Exception as e:
+                    logger.error(f"⚠️ Ошибка удаления файла: {e}")
         
         return response
         
@@ -398,21 +758,27 @@ def health_check():
         # Считаем активные потоки TTS
         tts_threads = [t for t in threading.enumerate() if t.name.startswith('TTS-')]
         
-        # Проверяем директорию временных файлов
-        temp_files_count = len(os.listdir('/app/temp_audio')) if os.path.exists('/app/temp_audio') else 0
+        # Получаем статистику кэша
+        cache_stats = tts_cache.get_stats()
         
         return jsonify({
             'status': 'healthy',
             'service': 'zindaki-tts-service',
-            'version': '4.0',
-            'mode': 'threaded-sync-simple',
-            'description': 'Синхронная генерация в отдельных потоках',
+            'version': '5.0',
+            'mode': 'threaded-sync-with-cache',
+            'description': 'Синхронная генерация с кэшированием',
             'active_threads': threading.active_count(),
             'active_tts_threads': len(tts_threads),
             'max_concurrent_threads': max_concurrent_threads,
             'models_loaded': list(tts_models.keys()),
             'models_count': len(tts_models),
-            'temp_files_count': temp_files_count,
+            'cache_stats': {
+                'hits': cache_hits,
+                'misses': cache_misses,
+                'hit_ratio': cache_hits / max((cache_hits + cache_misses), 1),
+                'total_entries': cache_stats.get('total_entries', 0),
+                'total_size_mb': cache_stats.get('total_size_mb', 0)
+            },
             'torch_version': torch.__version__,
             'torch_available': torch.cuda.is_available(),
             'python_version': sys.version.split()[0],
@@ -428,6 +794,97 @@ def health_check():
             'models_loaded': list(tts_models.keys()),
             'timestamp': datetime.now().isoformat()
         }), 500
+
+@app.route('/api/cache/stats', methods=['GET'])
+def cache_stats():
+    """Получение подробной статистики кэша"""
+    try:
+        stats = tts_cache.get_stats()
+        
+        return jsonify({
+            'cache_enabled': True,
+            'global_stats': {
+                'hits': cache_hits,
+                'misses': cache_misses,
+                'hit_ratio': cache_hits / max((cache_hits + cache_misses), 1),
+                'total_requests': cache_hits + cache_misses
+            },
+            'cache_details': stats,
+            'timestamp': datetime.now().isoformat()
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"❌ Ошибка получения статистики кэша: {e}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/cache/clear', methods=['POST'])
+def clear_cache():
+    """Очистка кэша"""
+    try:
+        data = request.get_json() or {}
+        clear_all = data.get('clear_all', False)
+        days_old = data.get('days_old', 7)
+        
+        conn = sqlite3.connect(tts_cache.db_path)
+        cursor = conn.cursor()
+        
+        if clear_all:
+            # Удаляем все записи
+            cursor.execute('SELECT cache_key, file_path FROM tts_cache')
+            records = cursor.fetchall()
+            
+            for cache_key, file_path in records:
+                try:
+                    if os.path.exists(file_path):
+                        os.remove(file_path)
+                except:
+                    pass
+            
+            cursor.execute('DELETE FROM tts_cache')
+            message = "Полная очистка кэша"
+            
+        else:
+            # Удаляем записи старше указанного количества дней
+            cutoff_date = datetime.now() - timedelta(days=days_old)
+            cursor.execute('SELECT cache_key, file_path FROM tts_cache WHERE created_at < ?', 
+                          (cutoff_date.isoformat(),))
+            records = cursor.fetchall()
+            
+            for cache_key, file_path in records:
+                try:
+                    if os.path.exists(file_path):
+                        os.remove(file_path)
+                except:
+                    pass
+            
+            cursor.execute('DELETE FROM tts_cache WHERE created_at < ?', 
+                          (cutoff_date.isoformat(),))
+            
+            message = f"Очистка кэша старше {days_old} дней"
+        
+        deleted_count = conn.total_changes
+        conn.commit()
+        conn.close()
+        
+        # Сбрасываем статистику хитов/миссов
+        global cache_hits, cache_misses
+        cache_hits = 0
+        cache_misses = 0
+        
+        logger.info(f"🗑️ {message}: удалено {deleted_count} записей")
+        
+        return jsonify({
+            'success': True,
+            'message': message,
+            'deleted_count': deleted_count,
+            'clear_all': clear_all,
+            'days_old': days_old if not clear_all else None,
+            'timestamp': datetime.now().isoformat()
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"❌ Ошибка очистки кэша: {e}")
+        return jsonify({'error': str(e)}), 500
 
 @app.route('/api/voices', methods=['GET'])
 def get_available_voices():
@@ -528,6 +985,7 @@ def test_endpoint():
             'model_loaded': True,
             'correct_speaker': model_info['correct_speaker'],
             'models_in_cache': list(tts_models.keys()),
+            'tts_cache_enabled': True,
             'timestamp': datetime.now().isoformat()
         })
         
@@ -559,6 +1017,12 @@ def debug_info():
     if os.path.exists(temp_dir):
         temp_files = os.listdir(temp_dir)
     
+    # Проверяем директорию кэша
+    cache_files = []
+    cache_dir = '/app/tts_cache/audio'
+    if os.path.exists(cache_dir):
+        cache_files = os.listdir(cache_dir)
+    
     # Получаем информацию о потоках
     thread_info = []
     tts_threads = []
@@ -571,6 +1035,9 @@ def debug_info():
             'alive': thread.is_alive()
         })
     
+    # Статистика кэша
+    cache_stats = tts_cache.get_stats()
+    
     return jsonify({
         'torch_version': torch.__version__,
         'torchaudio_version': torchaudio.__version__,
@@ -579,12 +1046,20 @@ def debug_info():
         'template_files': template_files,
         'temp_audio_dir': temp_dir,
         'temp_files_count': len(temp_files),
-        'temp_files': temp_files[:10],
+        'tts_cache_dir': cache_dir,
+        'tts_cache_files_count': len(cache_files),
+        'tts_cache_files': cache_files[:5],
         'models_loaded': list(tts_models.keys()),
         'active_threads': threading.active_count(),
         'active_tts_threads': len(tts_threads),
         'tts_thread_names': tts_threads[:10],
         'max_concurrent_threads': max_concurrent_threads,
+        'cache_stats': {
+            'global_hits': cache_hits,
+            'global_misses': cache_misses,
+            'hit_ratio': cache_hits / max((cache_hits + cache_misses), 1),
+            'cache_details': cache_stats
+        },
         'timestamp': datetime.now().isoformat()
     })
 
@@ -640,10 +1115,20 @@ def cleanup_temp_files():
             logger.error(f"⚠️ Ошибка очистки временных файлов: {e}")
 
 def periodic_cleanup():
-    """Периодическая очистка временных файлов"""
+    """Периодическая очистка временных файлов и проверка кэша"""
     while True:
         time.sleep(3600)  # Каждый час
+        
+        # Очистка файлов
         cleanup_temp_files()
+        
+        # Проверяем кэш
+        try:
+            stats = tts_cache.get_stats()
+            logger.info(f"📊 Статистика кэша: {stats.get('total_entries', 0)} записей, "
+                       f"{stats.get('total_size_mb', 0):.1f} MB")
+        except:
+            pass
 
 # Регистрируем очистку при завершении
 atexit.register(cleanup_temp_files)
@@ -652,7 +1137,7 @@ atexit.register(cleanup_temp_files)
 
 if __name__ == '__main__':
     print("\n" + "=" * 70)
-    print("🎵 ZINDAKI TTS SERVICE - Упрощенная версия с потоками v4.0")
+    print("🎵 ZINDAKI TTS SERVICE - Версия с кэшированием v5.0")
     print("=" * 70)
     print(f"📅 Дата запуска: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"🐍 Python версия: {sys.version.split()[0]}")
@@ -660,7 +1145,13 @@ if __name__ == '__main__':
     print(f"🎵 TorchAudio версия: {torchaudio.__version__}")
     print(f"📁 Кэш директория: {os.environ.get('TORCH_HOME')}")
     print(f"📁 Директория временных файлов: /app/temp_audio")
+    print(f"📁 Директория TTS кэша: /app/tts_cache")
     print(f"🧵 Максимальное количество потоков: {max_concurrent_threads}")
+    
+    # Статистика кэша при старте
+    cache_stats = tts_cache.get_stats()
+    print(f"📊 Кэш при старте: {cache_stats.get('total_entries', 0)} записей, "
+          f"{cache_stats.get('total_size_mb', 0):.1f} MB")
     
     # Проверяем наличие директории templates
     templates_dir = '/app/templates'
@@ -676,7 +1167,7 @@ if __name__ == '__main__':
     print("=" * 70)
     
     # Запускаем периодическую очистку в фоновом потоке
-    cleanup_thread = threading.Thread(target=periodic_cleanup, daemon=True)
+    cleanup_thread = threading.Thread(target=periodic_cleanup, daemon=True, name="Cache-Cleanup")
     cleanup_thread.start()
     print("✅ Фоновый очиститель запущен")
     
@@ -697,14 +1188,16 @@ if __name__ == '__main__':
     print(f"🌐 Доступен по адресу: http://0.0.0.0:5000")
     print(f"📚 API доступен по: http://0.0.0.0:5000/api/health")
     print("\n📋 Доступные эндпоинты:")
-    print("   POST /api/tts       - Генерация TTS (синхронно в потоке)")
-    print("   GET  /api/health    - Проверка здоровья сервиса")
-    print("   GET  /api/voices    - Список доступных голосов")
-    print("   GET  /api/test      - Тест работы сервиса")
+    print("   POST /api/tts           - Генерация TTS (с кэшированием)")
+    print("   GET  /api/health        - Проверка здоровья сервиса")
+    print("   GET  /api/cache/stats   - Статистика кэша")
+    print("   POST /api/cache/clear   - Очистка кэша")
+    print("   GET  /api/voices        - Список доступных голосов")
     print("=" * 70)
-    print("\n📝 Режим работы: Каждый запрос обрабатывается синхронно")
-    print("   в отдельном потоке, что обеспечивает параллельную")
-    print("   обработку множества запросов.")
+    print("\n📝 Режим работы: Синхронная генерация с кэшированием")
+    print("   • Каждый запрос проверяется в кэше")
+    print("   • При отсутствии в кэше - генерация в отдельном потоке")
+    print("   • Результаты автоматически добавляются в кэш")
     print("=" * 70)
     
     app.run(
