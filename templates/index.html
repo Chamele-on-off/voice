@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Zindaki TTS Service - Сервис озвучки</title>
+    <title>Zindaki TTS Service - Сервис озвучки текста</title>
     <style>
         * {
             margin: 0;
@@ -145,16 +145,16 @@
             transform: none;
         }
         
-        button.sync-btn {
+        button.generate-btn {
             background: linear-gradient(135deg, #28a745 0%, #20c997 100%);
-        }
-        
-        button.async-btn {
-            background: linear-gradient(135deg, #17a2b8 0%, #20c9b8 100%);
         }
         
         button.test-btn {
             background: linear-gradient(135deg, #6f42c1 0%, #a370f7 100%);
+        }
+        
+        button.info-btn {
+            background: linear-gradient(135deg, #17a2b8 0%, #20c9b8 100%);
         }
         
         .result-container {
@@ -173,12 +173,6 @@
             display: flex;
             align-items: center;
             gap: 10px;
-        }
-        
-        .status.queued {
-            background: #fff3cd;
-            color: #856404;
-            border: 1px solid #ffeaa7;
         }
         
         .status.processing {
@@ -265,14 +259,6 @@
             display: none;
         }
         
-        .queue-info {
-            background: #e9ecef;
-            padding: 15px;
-            border-radius: 8px;
-            margin-top: 15px;
-            font-size: 0.9rem;
-        }
-        
         .mode-description {
             margin-top: 10px;
             font-size: 0.9rem;
@@ -288,27 +274,121 @@
             color: #555;
         }
         
-        .sync-indicator {
-            display: inline-flex;
-            align-items: center;
-            gap: 5px;
-            font-size: 0.8rem;
-            padding: 3px 8px;
-            border-radius: 12px;
-            background: #28a745;
-            color: white;
-            margin-left: 10px;
+        .server-info {
+            background: #e9ecef;
+            padding: 15px;
+            border-radius: 8px;
+            margin-top: 15px;
+            font-size: 0.9rem;
         }
         
-        .async-indicator {
-            display: inline-flex;
-            align-items: center;
-            gap: 5px;
-            font-size: 0.8rem;
-            padding: 3px 8px;
-            border-radius: 12px;
+        .server-info .label {
+            font-weight: 600;
+            color: #555;
+        }
+        
+        .server-info .value {
+            color: #667eea;
+        }
+        
+        .alert {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            padding: 15px 20px;
+            border-radius: 8px;
+            color: white;
+            font-weight: 600;
+            z-index: 1000;
+            animation: slideIn 0.3s ease;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+            max-width: 400px;
+        }
+        
+        .alert.success {
+            background: linear-gradient(135deg, #28a745 0%, #20c997 100%);
+        }
+        
+        .alert.error {
+            background: linear-gradient(135deg, #dc3545 0%, #e4606d 100%);
+        }
+        
+        .alert.warning {
+            background: linear-gradient(135deg, #ffc107 0%, #ffd54f 100%);
+            color: #333;
+        }
+        
+        .alert.info {
+            background: linear-gradient(135deg, #17a2b8 0%, #20c9b8 100%);
+        }
+        
+        @keyframes slideIn {
+            from { transform: translateX(100%); opacity: 0; }
+            to { transform: translateX(0); opacity: 1; }
+        }
+        
+        @keyframes slideOut {
+            from { transform: translateX(0); opacity: 1; }
+            to { transform: translateX(100%); opacity: 0; }
+        }
+        
+        .char-counter {
+            text-align: right;
+            font-size: 0.85rem;
+            color: #666;
+            margin-top: 5px;
+        }
+        
+        .char-counter.warning {
+            color: #ffc107;
+        }
+        
+        .char-counter.error {
+            color: #dc3545;
+        }
+        
+        .model-info {
+            background: #e7f3ff;
+            border: 1px solid #b8daff;
+            border-radius: 8px;
+            padding: 10px;
+            margin-top: 10px;
+            font-size: 0.85rem;
+        }
+        
+        .model-info .loaded {
+            color: #28a745;
+            font-weight: 600;
+        }
+        
+        .model-info .not-loaded {
+            color: #dc3545;
+            font-weight: 600;
+        }
+        
+        .progress-bar {
+            width: 100%;
+            height: 8px;
+            background: #e9ecef;
+            border-radius: 4px;
+            margin-top: 10px;
+            overflow: hidden;
+        }
+        
+        .progress-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #28a745, #20c997);
+            border-radius: 4px;
+            transition: width 0.3s ease;
+        }
+        
+        .thread-info {
+            display: inline-block;
             background: #17a2b8;
             color: white;
+            padding: 3px 8px;
+            border-radius: 12px;
+            font-size: 0.8rem;
             margin-left: 10px;
         }
     </style>
@@ -317,24 +397,25 @@
     <div class="container">
         <header>
             <h1>🎵 Zindaki TTS Service</h1>
-            <p>Сервис озвучки текста для онлайн-школы</p>
+            <p>Сервис озвучки текста для образовательных платформ</p>
         </header>
         
         <div class="main-content">
             <!-- Левая колонка: Форма генерации -->
             <div class="card">
-                <h2>Генерация речи</h2>
+                <h2>Генерация речи из текста</h2>
                 
                 <div class="mode-description">
-                    <h4>📋 Доступные режимы:</h4>
-                    <p><strong>Синхронный режим</strong> — мгновенная генерация, подходит для коротких текстов</p>
-                    <p><strong>Асинхронный режим</strong> — через очередь, подходит для длинных текстов и фоновой обработки</p>
+                    <h4>📋 О сервисе:</h4>
+                    <p><strong>Режим работы:</strong> Синхронная генерация в отдельных потоках</p>
+                    <p>Каждый запрос обрабатывается в отдельном потоке, что позволяет обрабатывать множество запросов параллельно.</p>
                 </div>
                 
                 <form id="ttsForm">
                     <div class="form-group">
                         <label for="text">Текст для озвучки:</label>
-                        <textarea id="text" placeholder="Введите текст для озвучки..." required>Привет! Это демонстрация работы TTS сервиса. Введите свой текст и выберите режим генерации.</textarea>
+                        <textarea id="text" placeholder="Введите текст для озвучки..." required>Привет! Это демонстрация работы TTS сервиса. Сервис использует модели Silero для высококачественной синтезации речи на русском и английском языках.</textarea>
+                        <div id="charCounter" class="char-counter">0/5000 символов</div>
                     </div>
                     
                     <div class="form-group">
@@ -351,40 +432,48 @@
                             <option value="baya" selected>Байя (женский)</option>
                             <option value="kseniya">Ксения (женский)</option>
                             <option value="aidar">Айдар (мужской)</option>
+                            <option value="irina">Ирина (женский)</option>
+                            <option value="natasha">Наташа (женский)</option>
+                            <option value="ruslan">Руслан (мужской)</option>
                         </select>
+                        
+                        <div id="modelStatus" class="model-info">
+                            Статус модели: <span class="not-loaded">Не загружена</span>
+                        </div>
                     </div>
                     
                     <div class="button-group">
-                        <button type="button" id="syncBtn" class="sync-btn">
-                            ⚡ Синхронная генерация
-                        </button>
-                        <button type="button" id="asyncBtn" class="async-btn">
-                            🔄 Асинхронная генерация
+                        <button type="button" id="generateBtn" class="generate-btn">
+                            🎵 Сгенерировать аудио
                         </button>
                     </div>
                 </form>
                 
                 <div id="resultContainer" class="result-container hidden">
                     <div id="status" class="status"></div>
+                    <div id="progressBar" class="progress-bar hidden">
+                        <div id="progressFill" class="progress-fill" style="width: 0%"></div>
+                    </div>
                     <div id="resultInfo"></div>
-                    <div id="queueInfo" class="queue-info hidden"></div>
+                    <div id="serverInfo" class="server-info hidden"></div>
                     <div id="audioContainer" class="hidden">
                         <audio id="audioPlayer" controls></audio>
                         <div class="audio-controls">
                             <button onclick="downloadAudio()">💾 Скачать WAV</button>
                             <button onclick="playAudio()">▶️ Воспроизвести</button>
                             <button onclick="stopAudio()">⏹️ Остановить</button>
+                            <button onclick="shareAudio()">📤 Поделиться</button>
                         </div>
                     </div>
                     <div class="spinner hidden" id="loadingSpinner"></div>
                 </div>
                 
                 <div class="button-group" style="margin-top: 20px;">
-                    <button type="button" onclick="testSyncGeneration()" class="test-btn">
-                        🧪 Тест синхронный
+                    <button type="button" onclick="testAPI()" class="test-btn">
+                        🧪 Тест API
                     </button>
-                    <button type="button" onclick="testAsyncGeneration()" class="test-btn">
-                        🧪 Тест асинхронный
+                    <button type="button" onclick="clearForm()" class="info-btn">
+                        🗑️ Очистить форму
                     </button>
                 </div>
             </div>
@@ -405,145 +494,191 @@
                     </div>
                     
                     <div class="info-item">
-                        <div>Очередь задач</div>
-                        <div class="info-value" id="queueSize">0</div>
+                        <div>Активных потоков</div>
+                        <div class="info-value" id="activeThreads">0</div>
                     </div>
                     
                     <div class="info-item">
-                        <div>Время работы</div>
-                        <div class="info-value" id="uptime">...</div>
+                        <div>Макс. потоков</div>
+                        <div class="info-value" id="maxThreads">50</div>
                     </div>
                 </div>
                 
-                <div class="form-group" style="margin-top: 20px;">
-                    <label>Доступные голоса:</label>
-                    <div id="voicesList" style="padding: 10px; background: #f8f9fa; border-radius: 8px; max-height: 200px; overflow-y: auto;">
-                        Загрузка...
+                <h3>Доступные голосовые модели</h3>
+                <div id="voicesList" style="padding: 10px; background: #f8f9fa; border-radius: 8px; max-height: 300px; overflow-y: auto; margin-top: 10px;">
+                    <div style="text-align: center; padding: 20px;">
+                        <div class="spinner" style="width: 30px; height: 30px; border-width: 3px;"></div>
+                        <div style="margin-top: 10px;">Загрузка информации о голосах...</div>
                     </div>
                 </div>
                 
-                <h3>Управление задачами</h3>
+                <div class="server-info" style="margin-top: 20px;">
+                    <div><span class="label">Версия сервиса:</span> <span class="value" id="serviceVersion">4.0</span></div>
+                    <div><span class="label">Режим работы:</span> <span class="value">Threaded Sync</span></div>
+                    <div><span class="label">Время работы:</span> <span class="value" id="uptime">...</span></div>
+                </div>
+                
+                <h3 style="margin-top: 25px;">Управление</h3>
                 <div class="button-group">
-                    <button onclick="checkQueueStatus()" style="background: #6c757d;">
-                        📊 Статус очереди
+                    <button onclick="loadVoices()" class="info-btn">
+                        🔄 Обновить голоса
                     </button>
-                    <button onclick="clearResultsCache()" style="background: #dc3545;">
-                        🗑️ Очистить кэш
+                    <button onclick="checkHealth()" class="info-btn">
+                        🩺 Проверить здоровье
                     </button>
                 </div>
                 
                 <div class="button-group" style="margin-top: 15px;">
-                    <button onclick="loadVoices()" style="background: #28a745;">
-                        🔄 Обновить информацию
+                    <button onclick="showDebugInfo()" class="test-btn">
+                        🐛 Отладочная информация
                     </button>
-                    <button onclick="runTest()" style="background: #17a2b8;">
-                        🧪 Тест API
+                    <button onclick="loadDefaultModel()" class="generate-btn">
+                        ⚡ Предзагрузить модель
                     </button>
+                </div>
+                
+                <div class="mode-description" style="margin-top: 20px;">
+                    <h4>📊 Мониторинг:</h4>
+                    <p>Сервис автоматически обновляет статус каждые 30 секунд.</p>
+                    <p>Информация о потоках обновляется в реальном времени.</p>
                 </div>
             </div>
         </div>
         
         <footer>
             <p>Zindaki TTS Service • Сервис озвучки для образовательных платформ</p>
-            <p>API: <code>/api/tts</code> • <code>/api/tts-sync</code> • <code>/api/health</code> • <code>/api/status/&lt;id&gt;</code></p>
+            <p>API Endpoint: <code>POST /api/tts</code> • Тест: <code>GET /api/test</code> • Статус: <code>GET /api/health</code></p>
+            <p style="margin-top: 10px; font-size: 0.9rem;">Версия 4.0 • Каждый запрос в отдельном потоке</p>
         </footer>
     </div>
     
     <script>
         // Элементы DOM
         const ttsForm = document.getElementById('ttsForm');
-        const syncBtn = document.getElementById('syncBtn');
-        const asyncBtn = document.getElementById('asyncBtn');
+        const generateBtn = document.getElementById('generateBtn');
         const resultContainer = document.getElementById('resultContainer');
         const statusDiv = document.getElementById('status');
         const resultInfo = document.getElementById('resultInfo');
-        const queueInfo = document.getElementById('queueInfo');
+        const serverInfo = document.getElementById('serverInfo');
         const audioContainer = document.getElementById('audioContainer');
         const audioPlayer = document.getElementById('audioPlayer');
         const loadingSpinner = document.getElementById('loadingSpinner');
+        const progressBar = document.getElementById('progressBar');
+        const progressFill = document.getElementById('progressFill');
+        const charCounter = document.getElementById('charCounter');
+        const modelStatus = document.getElementById('modelStatus');
         
         // Элементы информации
         const serviceStatus = document.getElementById('serviceStatus');
         const modelsCount = document.getElementById('modelsCount');
-        const queueSize = document.getElementById('queueSize');
+        const activeThreads = document.getElementById('activeThreads');
+        const maxThreads = document.getElementById('maxThreads');
         const uptime = document.getElementById('uptime');
         const voicesList = document.getElementById('voicesList');
+        const serviceVersion = document.getElementById('serviceVersion');
         
-        // Текущий task_id/job_id
-        let currentTaskId = null;
-        let checkStatusInterval = null;
+        // Текущие переменные
+        let currentRequestId = null;
         let currentAudioUrl = null;
+        let currentFilename = null;
+        let generationStartTime = null;
+        let progressInterval = null;
         
         // При загрузке страницы
         document.addEventListener('DOMContentLoaded', function() {
             checkHealth();
             loadVoices();
-            checkQueueStatus();
+            updateCharCounter();
+            updateModelStatus();
             
-            // Устанавливаем максимальную длину текста
+            // Назначаем обработчики
+            generateBtn.addEventListener('click', generateTTS);
+            
+            // Слушаем изменения в форме
             const textarea = document.getElementById('text');
-            textarea.addEventListener('input', function() {
-                const maxLength = 5000;
-                if (this.value.length > maxLength) {
-                    this.value = this.value.substring(0, maxLength);
-                    showAlert(`Максимальная длина текста: ${maxLength} символов`, 'warning');
-                }
-            });
+            textarea.addEventListener('input', updateCharCounter);
             
-            // Назначаем обработчики кнопок
-            syncBtn.addEventListener('click', generateSync);
-            asyncBtn.addEventListener('click', generateAsync);
+            const languageSelect = document.getElementById('language');
+            const speakerSelect = document.getElementById('speaker');
+            
+            languageSelect.addEventListener('change', updateModelStatus);
+            speakerSelect.addEventListener('change', updateModelStatus);
+            
+            // Обновление информации каждые 30 секунд
+            setInterval(() => {
+                checkHealth();
+            }, 30000);
+            
+            // Обновление прогресса если идет генерация
+            setInterval(() => {
+                if (generationStartTime) {
+                    updateProgress();
+                }
+            }, 1000);
         });
         
         // Показать уведомление
-        function showAlert(message, type = 'info') {
+        function showAlert(message, type = 'info', duration = 3000) {
+            // Удаляем старые уведомления
+            const oldAlerts = document.querySelectorAll('.alert');
+            oldAlerts.forEach(alert => alert.remove());
+            
             const alertDiv = document.createElement('div');
-            alertDiv.style.cssText = `
-                position: fixed;
-                top: 20px;
-                right: 20px;
-                padding: 15px 20px;
-                border-radius: 8px;
-                color: white;
-                font-weight: 600;
-                z-index: 1000;
-                animation: slideIn 0.3s ease;
-                box-shadow: 0 4px 12px rgba(0,0,0,0.15);
-            `;
-            
-            if (type === 'success') {
-                alertDiv.style.background = 'linear-gradient(135deg, #28a745 0%, #20c997 100%)';
-            } else if (type === 'error') {
-                alertDiv.style.background = 'linear-gradient(135deg, #dc3545 0%, #e4606d 100%)';
-            } else if (type === 'warning') {
-                alertDiv.style.background = 'linear-gradient(135deg, #ffc107 0%, #ffd54f 100%)';
-                alertDiv.style.color = '#333';
-            } else {
-                alertDiv.style.background = 'linear-gradient(135deg, #17a2b8 0%, #20c9b8 100%)';
-            }
-            
+            alertDiv.className = `alert ${type}`;
             alertDiv.textContent = message;
             document.body.appendChild(alertDiv);
             
             setTimeout(() => {
                 alertDiv.style.animation = 'slideOut 0.3s ease';
-                setTimeout(() => document.body.removeChild(alertDiv), 300);
-            }, 3000);
+                setTimeout(() => alertDiv.remove(), 300);
+            }, duration);
         }
         
-        // CSS для анимаций уведомлений
-        const style = document.createElement('style');
-        style.textContent = `
-            @keyframes slideIn {
-                from { transform: translateX(100%); opacity: 0; }
-                to { transform: translateX(0); opacity: 1; }
+        // Обновление счетчика символов
+        function updateCharCounter() {
+            const textarea = document.getElementById('text');
+            const text = textarea.value;
+            const length = text.length;
+            const maxLength = 5000;
+            
+            charCounter.textContent = `${length}/${maxLength} символов`;
+            charCounter.className = 'char-counter';
+            
+            if (length > maxLength * 0.9) {
+                charCounter.className = 'char-counter warning';
             }
-            @keyframes slideOut {
-                from { transform: translateX(0); opacity: 1; }
-                to { transform: translateX(100%); opacity: 0; }
+            
+            if (length > maxLength) {
+                charCounter.className = 'char-counter error';
+                showAlert(`Превышена максимальная длина текста (${maxLength} символов)`, 'warning');
+                textarea.value = text.substring(0, maxLength);
+                updateCharCounter();
             }
-        `;
-        document.head.appendChild(style);
+        }
+        
+        // Обновление статуса модели
+        function updateModelStatus() {
+            const language = document.getElementById('language').value;
+            const speaker = document.getElementById('speaker').value;
+            const modelKey = `${language}_${speaker}`;
+            
+            // Проверяем, загружена ли модель
+            fetch('/api/health')
+                .then(response => response.json())
+                .then(data => {
+                    const isLoaded = data.models_loaded && data.models_loaded.includes(modelKey);
+                    
+                    modelStatus.innerHTML = `
+                        Статус модели: <span class="${isLoaded ? 'loaded' : 'not-loaded'}">
+                            ${isLoaded ? '✅ Загружена в память' : '❌ Не загружена (будет загружена при генерации)'}
+                        </span>
+                        ${isLoaded ? '<div style="margin-top: 5px; font-size: 0.8em; color: #666;">Модель готова к использованию</div>' : ''}
+                    `;
+                })
+                .catch(error => {
+                    console.error('Ошибка проверки статуса модели:', error);
+                });
+        }
         
         // Проверка здоровья сервиса
         async function checkHealth() {
@@ -555,8 +690,10 @@
                     serviceStatus.textContent = '✅ Работает';
                     serviceStatus.style.color = '#28a745';
                     modelsCount.textContent = data.models_count || 0;
-                    queueSize.textContent = data.queue_size || 0;
+                    activeThreads.textContent = data.active_tts_threads || 0;
+                    maxThreads.textContent = data.max_concurrent_threads || 50;
                     uptime.textContent = data.uptime ? data.uptime.split('.')[0] : 'N/A';
+                    serviceVersion.textContent = data.version || '4.0';
                 } else {
                     serviceStatus.textContent = '❌ Ошибка';
                     serviceStatus.style.color = '#dc3545';
@@ -568,38 +705,32 @@
             }
         }
         
-        // Проверка статуса очереди
-        async function checkQueueStatus() {
-            try {
-                const response = await fetch('/api/queue-status');
-                const data = await response.json();
-                
-                queueSize.textContent = data.queue_size || 0;
-                
-                // Показываем уведомление если есть задачи в очереди
-                if (data.queue_size > 0) {
-                    showAlert(`В очереди ${data.queue_size} задач`, 'info');
-                }
-            } catch (error) {
-                console.error('Ошибка проверки очереди:', error);
-            }
-        }
-        
         // Загрузка списка голосов
         async function loadVoices() {
             try {
+                voicesList.innerHTML = `
+                    <div style="text-align: center; padding: 10px;">
+                        <div class="spinner" style="width: 20px; height: 20px; border-width: 2px; display: inline-block;"></div>
+                        <div style="margin-top: 5px; font-size: 0.9em;">Загрузка...</div>
+                    </div>
+                `;
+                
                 const response = await fetch('/api/voices');
                 const data = await response.json();
                 
                 let voicesHtml = '';
                 
                 if (data.all_voices && data.all_voices.ru) {
+                    voicesHtml += '<h4 style="margin-bottom: 10px; color: #555;">🇷🇺 Русские голоса:</h4>';
                     data.all_voices.ru.forEach(voice => {
                         const isLoaded = data.loaded_voices?.ru?.some(v => v.id === voice.id) || false;
                         voicesHtml += `
                             <div style="margin: 8px 0; padding: 10px; background: ${isLoaded ? '#d4edda' : '#f8d7da'}; border-radius: 6px; border-left: 4px solid ${isLoaded ? '#28a745' : '#dc3545'};">
                                 <div style="font-weight: 600;">${voice.name}</div>
-                                <div style="font-size: 0.9em; color: #666;">ID: ${voice.id} • ${voice.description}</div>
+                                <div style="font-size: 0.9em; color: #666;">ID: <code>${voice.id}</code> • ${voice.description}</div>
+                                <div style="font-size: 0.85em; margin-top: 5px; color: #555;">
+                                    Частота: ${voice.sample_rate}Hz • Фактический: ${voice.actual}
+                                </div>
                                 <div style="font-size: 0.8em; margin-top: 5px; text-align: right;">
                                     <span style="background: ${isLoaded ? '#28a745' : '#dc3545'}; color: white; padding: 2px 8px; border-radius: 10px;">
                                         ${isLoaded ? '✅ Загружен' : '❌ Не загружен'}
@@ -610,28 +741,54 @@
                     });
                 }
                 
+                if (data.all_voices && data.all_voices.en) {
+                    voicesHtml += '<h4 style="margin-top: 20px; margin-bottom: 10px; color: #555;">🇬🇧 Английские голоса:</h4>';
+                    data.all_voices.en.forEach(voice => {
+                        const isLoaded = data.loaded_voices?.en?.some(v => v.id === voice.id) || false;
+                        voicesHtml += `
+                            <div style="margin: 8px 0; padding: 10px; background: ${isLoaded ? '#d4edda' : '#f8d7da'}; border-radius: 6px; border-left: 4px solid ${isLoaded ? '#28a745' : '#dc3545'};">
+                                <div style="font-weight: 600;">${voice.name}</div>
+                                <div style="font-size: 0.9em; color: #666;">ID: <code>${voice.id}</code> • ${voice.description}</div>
+                                <div style="font-size: 0.85em; margin-top: 5px; color: #555;">
+                                    Sample rate: ${voice.sample_rate}Hz • Actual: ${voice.actual}
+                                </div>
+                                <div style="font-size: 0.8em; margin-top: 5px; text-align: right;">
+                                    <span style="background: ${isLoaded ? '#28a745' : '#dc3545'}; color: white; padding: 2px 8px; border-radius: 10px;">
+                                        ${isLoaded ? '✅ Loaded' : '❌ Not loaded'}
+                                    </span>
+                                </div>
+                            </div>
+                        `;
+                    });
+                }
+                
                 voicesList.innerHTML = voicesHtml;
+                
             } catch (error) {
-                voicesList.innerHTML = '<div style="color: #dc3545; padding: 10px; text-align: center;">Ошибка загрузки голосов</div>';
+                voicesList.innerHTML = `
+                    <div style="color: #dc3545; padding: 10px; text-align: center;">
+                        <div>❌ Ошибка загрузки голосов</div>
+                        <div style="font-size: 0.8em; margin-top: 5px;">${error.message}</div>
+                    </div>
+                `;
                 console.error('Ошибка загрузки голосов:', error);
             }
         }
         
-        // Синхронная генерация
-        async function generateSync() {
-            const text = document.getElementById('text').value;
+        // Генерация TTS
+        async function generateTTS() {
+            const text = document.getElementById('text').value.trim();
             const language = document.getElementById('language').value;
             const speaker = document.getElementById('speaker').value;
             
-            if (!text.trim()) {
+            if (!text) {
                 showAlert('Пожалуйста, введите текст для озвучки', 'warning');
                 return;
             }
             
-            if (text.length > 2000) {
-                if (!confirm('Текст довольно длинный. Рекомендуется использовать асинхронный режим. Продолжить в синхронном режиме?')) {
-                    return;
-                }
+            if (text.length > 5000) {
+                showAlert('Текст слишком длинный. Максимум 5000 символов.', 'error');
+                return;
             }
             
             // Показываем результат контейнер
@@ -639,105 +796,25 @@
             resultContainer.classList.remove('hidden');
             audioContainer.classList.add('hidden');
             loadingSpinner.classList.remove('hidden');
+            progressBar.classList.remove('hidden');
+            progressFill.style.width = '0%';
             
             // Обновляем статус
-            statusDiv.innerHTML = '<span>⚡ Синхронная генерация...</span><span class="sync-indicator">СИНХРОННО</span>';
+            statusDiv.innerHTML = '<span>⚡ Генерация аудио...</span><span class="thread-info">ПОТОК</span>';
             statusDiv.className = 'status processing';
-            resultInfo.textContent = '';
+            resultInfo.textContent = `Текст: ${text.substring(0, 50)}${text.length > 50 ? '...' : ''}`;
+            serverInfo.classList.add('hidden');
             
-            // Блокируем кнопки
-            syncBtn.disabled = true;
-            asyncBtn.disabled = true;
-            syncBtn.textContent = '⏳ Генерация...';
+            // Блокируем кнопку
+            generateBtn.disabled = true;
+            generateBtn.textContent = '⏳ Генерация...';
             
-            try {
-                const response = await fetch('/api/tts-sync', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                    },
-                    body: JSON.stringify({
-                        text: text,
-                        language: language,
-                        speaker: speaker,
-                        sample_rate: 16000
-                    })
-                });
-                
-                if (response.status === 200) {
-                    // Получаем аудио файл
-                    const audioBlob = await response.blob();
-                    
-                    // Освобождаем предыдущий URL если есть
-                    if (currentAudioUrl) {
-                        URL.revokeObjectURL(currentAudioUrl);
-                    }
-                    
-                    currentAudioUrl = URL.createObjectURL(audioBlob);
-                    currentTaskId = `sync_${Date.now()}`;
-                    
-                    audioPlayer.src = currentAudioUrl;
-                    audioContainer.classList.remove('hidden');
-                    loadingSpinner.classList.add('hidden');
-                    
-                    statusDiv.innerHTML = '<span>✅ Аудио готово!</span><span class="sync-indicator">СИНХРОННО</span>';
-                    statusDiv.className = 'status success';
-                    resultInfo.textContent = 'Аудио успешно сгенерировано. Нажмите кнопку воспроизведения или скачайте файл.';
-                    
-                    // Автоматическое воспроизведение
-                    setTimeout(() => {
-                        audioPlayer.play().catch(e => {
-                            console.log('Автовоспроизведение отключено или произошла ошибка:', e);
-                        });
-                    }, 500);
-                    
-                    showAlert('Аудио успешно сгенерировано!', 'success');
-                    
-                } else {
-                    const errorData = await response.json();
-                    throw new Error(errorData.error || `Ошибка сервера: ${response.status}`);
-                }
-            } catch (error) {
-                statusDiv.innerHTML = '<span>❌ Ошибка генерации</span><span class="sync-indicator">СИНХРОННО</span>';
-                statusDiv.className = 'status error';
-                resultInfo.textContent = error.message;
-                loadingSpinner.classList.add('hidden');
-                showAlert(`Ошибка синхронной генерации: ${error.message}`, 'error');
-            } finally {
-                // Разблокируем кнопки
-                syncBtn.disabled = false;
-                asyncBtn.disabled = false;
-                syncBtn.textContent = '⚡ Синхронная генерация';
-            }
-        }
-        
-        // Асинхронная генерация
-        async function generateAsync() {
-            const text = document.getElementById('text').value;
-            const language = document.getElementById('language').value;
-            const speaker = document.getElementById('speaker').value;
+            // Запоминаем время начала
+            generationStartTime = Date.now();
             
-            if (!text.trim()) {
-                showAlert('Пожалуйста, введите текст для озвучки', 'warning');
-                return;
-            }
-            
-            // Показываем результат контейнер
-            resetResultContainer();
-            resultContainer.classList.remove('hidden');
-            audioContainer.classList.add('hidden');
-            loadingSpinner.classList.remove('hidden');
-            
-            // Обновляем статус
-            statusDiv.innerHTML = '<span>⏳ Отправка задачи...</span><span class="async-indicator">АСИНХРОННО</span>';
-            statusDiv.className = 'status queued';
-            resultInfo.textContent = '';
-            queueInfo.classList.remove('hidden');
-            
-            // Блокируем кнопки
-            syncBtn.disabled = true;
-            asyncBtn.disabled = true;
-            asyncBtn.textContent = '⏳ Отправка...';
+            // Запускаем обновление прогресса
+            if (progressInterval) clearInterval(progressInterval);
+            progressInterval = setInterval(updateProgress, 100);
             
             try {
                 const response = await fetch('/api/tts', {
@@ -753,137 +830,132 @@
                     })
                 });
                 
-                const data = await response.json();
+                // Останавливаем прогресс
+                clearInterval(progressInterval);
+                progressFill.style.width = '100%';
                 
-                if (response.status === 202) {
-                    statusDiv.innerHTML = '<span>📋 Задача в очереди</span><span class="async-indicator">АСИНХРОННО</span>';
-                    resultInfo.textContent = `Task ID: ${data.task_id}`;
+                if (response.status === 200) {
+                    // Получаем аудио файл
+                    const audioBlob = await response.blob();
                     
-                    currentTaskId = data.task_id;
-                    updateQueueInfo(data.queue_position, data.estimated_time);
+                    // Освобождаем предыдущий URL если есть
+                    if (currentAudioUrl) {
+                        URL.revokeObjectURL(currentAudioUrl);
+                    }
                     
-                    showAlert(`Задача добавлена в очередь. Позиция: ${data.queue_position || 1}`, 'info');
-                    startCheckingStatus();
+                    currentAudioUrl = URL.createObjectURL(audioBlob);
+                    currentRequestId = `tts_${Date.now()}`;
+                    currentFilename = `tts_${language}_${speaker}_${Date.now()}.wav`;
+                    
+                    audioPlayer.src = currentAudioUrl;
+                    audioContainer.classList.remove('hidden');
+                    loadingSpinner.classList.add('hidden');
+                    
+                    statusDiv.innerHTML = '<span>✅ Аудио готово!</span><span class="thread-info">ГОТОВО</span>';
+                    statusDiv.className = 'status success';
+                    
+                    const fileSize = (audioBlob.size / 1024).toFixed(1);
+                    const generationTime = ((Date.now() - generationStartTime) / 1000).toFixed(1);
+                    
+                    resultInfo.innerHTML = `
+                        <div>✅ Аудио успешно сгенерировано за ${generationTime} секунд</div>
+                        <div style="margin-top: 5px; font-size: 0.9em;">
+                            Размер файла: ${fileSize} KB • Формат: WAV 16kHz
+                        </div>
+                    `;
+                    
+                    // Показываем информацию о сервере
+                    const healthData = await fetch('/api/health').then(r => r.json());
+                    serverInfo.innerHTML = `
+                        <div><span class="label">Модель:</span> <span class="value">${language}_${speaker}</span></div>
+                        <div><span class="label">Активных потоков:</span> <span class="value">${healthData.active_tts_threads || 0}</span></div>
+                        <div><span class="label">Загружено моделей:</span> <span class="value">${healthData.models_count || 0}</span></div>
+                    `;
+                    serverInfo.classList.remove('hidden');
+                    
+                    // Автоматическое воспроизведение
+                    setTimeout(() => {
+                        audioPlayer.play().catch(e => {
+                            console.log('Автовоспроизведение отключено:', e);
+                        });
+                    }, 300);
+                    
+                    showAlert(`Аудио успешно сгенерировано! Время: ${generationTime}с`, 'success');
+                    
+                } else if (response.status === 429) {
+                    const errorData = await response.json();
+                    throw new Error(`Сервис перегружен: ${errorData.message || 'Слишком много запросов'}`);
+                    
+                } else if (response.status === 504) {
+                    throw new Error('Таймаут генерации. Попробуйте сократить текст или повторить позже.');
                     
                 } else {
-                    throw new Error(data.error || 'Неизвестная ошибка');
+                    const errorData = await response.json();
+                    throw new Error(errorData.error || `Ошибка сервера: ${response.status}`);
                 }
             } catch (error) {
-                statusDiv.innerHTML = '<span>❌ Ошибка отправки</span><span class="async-indicator">АСИНХРОННО</span>';
+                statusDiv.innerHTML = '<span>❌ Ошибка генерации</span>';
                 statusDiv.className = 'status error';
                 resultInfo.textContent = error.message;
                 loadingSpinner.classList.add('hidden');
-                queueInfo.classList.add('hidden');
-                showAlert(`Ошибка асинхронной генерации: ${error.message}`, 'error');
+                progressBar.classList.add('hidden');
+                showAlert(`Ошибка генерации: ${error.message}`, 'error');
+            } finally {
+                // Разблокируем кнопку
+                generateBtn.disabled = false;
+                generateBtn.textContent = '🎵 Сгенерировать аудио';
                 
-                // Разблокируем кнопки
-                syncBtn.disabled = false;
-                asyncBtn.disabled = false;
-                asyncBtn.textContent = '🔄 Асинхронная генерация';
+                // Сбрасываем таймер
+                generationStartTime = null;
+                clearInterval(progressInterval);
+                progressInterval = null;
+                
+                // Обновляем статус сервиса
+                checkHealth();
+                updateModelStatus();
             }
         }
         
-        // Обновление информации об очереди
-        function updateQueueInfo(position, estimatedTime) {
-            queueInfo.innerHTML = `
-                <div style="display: flex; justify-content: space-between; align-items: center;">
-                    <div>
-                        <strong>Позиция в очереди:</strong> ${position || 'N/A'}
-                    </div>
-                    <div>
-                        <strong>Ожидаемое время:</strong> ${estimatedTime || '5-30 секунд'}
-                    </div>
-                </div>
-                <div style="margin-top: 10px; font-size: 0.85em; color: #666;">
-                    Задача обрабатывается в фоновом режиме. Вы можете продолжать использовать сервис.
-                </div>
-            `;
+        // Обновление прогресс-бара
+        function updateProgress() {
+            if (!generationStartTime) return;
+            
+            const elapsed = Date.now() - generationStartTime;
+            const maxTime = 60000; // 60 секунд максимум
+            
+            // Показываем прошедшее время
+            const seconds = Math.floor(elapsed / 1000);
+            statusDiv.innerHTML = `<span>⚡ Генерация аудио... (${seconds}с)</span><span class="thread-info">ПОТОК</span>`;
+            
+            // Обновляем прогресс-бар (но не до 100%, чтобы показать что процесс идет)
+            let progress = Math.min((elapsed / maxTime) * 100, 95);
+            progressFill.style.width = `${progress}%`;
+            
+            // Если прошло больше 55 секунд, показываем предупреждение
+            if (elapsed > 55000) {
+                progressFill.style.background = 'linear-gradient(90deg, #ffc107, #ff9800)';
+                if (elapsed > 58000) {
+                    progressFill.style.background = 'linear-gradient(90deg, #dc3545, #e4606d)';
+                }
+            }
         }
         
         // Сброс контейнера результатов
         function resetResultContainer() {
-            if (checkStatusInterval) {
-                clearInterval(checkStatusInterval);
-                checkStatusInterval = null;
-            }
-            
             if (currentAudioUrl) {
                 URL.revokeObjectURL(currentAudioUrl);
                 currentAudioUrl = null;
             }
             
-            audioPlayer.src = '';
-            currentTaskId = null;
-        }
-        
-        // Начинаем проверку статуса задачи
-        function startCheckingStatus() {
-            if (checkStatusInterval) {
-                clearInterval(checkStatusInterval);
+            if (progressInterval) {
+                clearInterval(progressInterval);
+                progressInterval = null;
             }
             
-            checkStatusInterval = setInterval(async () => {
-                try {
-                    const response = await fetch(`/api/status/${currentTaskId}`);
-                    
-                    if (response.status === 200) {
-                        // Задача завершена, получаем аудио
-                        const audioBlob = await response.blob();
-                        
-                        // Освобождаем предыдущий URL если есть
-                        if (currentAudioUrl) {
-                            URL.revokeObjectURL(currentAudioUrl);
-                        }
-                        
-                        currentAudioUrl = URL.createObjectURL(audioBlob);
-                        audioPlayer.src = currentAudioUrl;
-                        audioContainer.classList.remove('hidden');
-                        loadingSpinner.classList.add('hidden');
-                        queueInfo.classList.add('hidden');
-                        
-                        statusDiv.innerHTML = '<span>✅ Аудио готово!</span><span class="async-indicator">АСИНХРОННО</span>';
-                        statusDiv.className = 'status success';
-                        resultInfo.textContent = 'Аудио успешно сгенерировано в фоновом режиме.';
-                        
-                        // Разблокируем кнопки
-                        syncBtn.disabled = false;
-                        asyncBtn.disabled = false;
-                        asyncBtn.textContent = '🔄 Асинхронная генерация';
-                        
-                        clearInterval(checkStatusInterval);
-                        checkQueueStatus();
-                        showAlert('Асинхронная генерация завершена!', 'success');
-                        
-                    } else if (response.status === 500) {
-                        // Ошибка задачи
-                        const errorData = await response.json();
-                        throw new Error(errorData.error || 'Ошибка генерации');
-                    } else {
-                        // Задача еще выполняется
-                        const statusData = await response.json();
-                        
-                        statusDiv.innerHTML = `<span>🔄 ${statusData.status}</span><span class="async-indicator">АСИНХРОННО</span>`;
-                        
-                        if (statusData.queue_position) {
-                            updateQueueInfo(statusData.queue_position, 'обрабатывается...');
-                        }
-                    }
-                } catch (error) {
-                    statusDiv.innerHTML = '<span>❌ Ошибка генерации</span><span class="async-indicator">АСИНХРОННО</span>';
-                    statusDiv.className = 'status error';
-                    resultInfo.textContent = error.message;
-                    loadingSpinner.classList.add('hidden');
-                    queueInfo.classList.add('hidden');
-                    
-                    // Разблокируем кнопки
-                    syncBtn.disabled = false;
-                    asyncBtn.disabled = false;
-                    asyncBtn.textContent = '🔄 Асинхронная генерация';
-                    
-                    clearInterval(checkStatusInterval);
-                    showAlert(`Ошибка асинхронной генерации: ${error.message}`, 'error');
-                }
-            }, 3000); // Проверяем каждые 3 секунды
+            audioPlayer.src = '';
+            currentRequestId = null;
+            currentFilename = null;
+            generationStartTime = null;
         }
         
         // Воспроизведение аудио
@@ -914,41 +986,43 @@
             
             const a = document.createElement('a');
             a.href = audioPlayer.src;
-            a.download = `tts_${currentTaskId || 'audio'}_${Date.now()}.wav`;
+            a.download = currentFilename || `tts_${Date.now()}.wav`;
             document.body.appendChild(a);
             a.click();
             document.body.removeChild(a);
-            showAlert('Аудио скачивается...', 'success');
+            showAlert('Аудио скачивается...', 'success', 1500);
         }
         
-        // Тест синхронной генерации
-        async function testSyncGeneration() {
-            try {
-                showAlert('Запуск теста синхронной генерации...', 'info');
-                
-                const response = await fetch('/api/test-generate');
-                const data = await response.json();
-                
-                if (data.success) {
-                    showAlert(`✅ Тест пройден! Файл: ${data.filename}, Размер: ${data.file_size_kb} KB`, 'success');
-                } else {
-                    showAlert(`❌ Тест не пройден: ${data.error}`, 'error');
-                }
-            } catch (error) {
-                showAlert(`❌ Ошибка теста: ${error.message}`, 'error');
+        // Поделиться аудио
+        function shareAudio() {
+            if (!audioPlayer.src) {
+                showAlert('Аудио не загружено', 'warning');
+                return;
+            }
+            
+            if (navigator.share) {
+                navigator.share({
+                    title: 'Сгенерированное аудио TTS',
+                    text: 'Аудио сгенерировано с помощью Zindaki TTS Service',
+                    url: audioPlayer.src
+                }).catch(e => {
+                    console.log('Пользователь отменил шаринг:', e);
+                });
+            } else {
+                showAlert('Функция "Поделиться" недоступна в вашем браузере', 'info');
             }
         }
         
-        // Тест асинхронной генерации
-        async function testAsyncGeneration() {
+        // Тест API
+        async function testAPI() {
             try {
-                showAlert('Запуск теста асинхронной генерации...', 'info');
+                showAlert('Запуск теста API...', 'info');
                 
                 const response = await fetch('/api/test');
                 const data = await response.json();
                 
                 if (data.success) {
-                    showAlert(`✅ Тест API пройден! Тип: ${data.result_type}, Аудио: ${data.audio_shape}`, 'success');
+                    showAlert(`✅ Тест пройден! Тип результата: ${data.result_type}`, 'success');
                 } else {
                     showAlert(`❌ Тест не пройден: ${data.error}`, 'error');
                 }
@@ -957,43 +1031,65 @@
             }
         }
         
-        // Общий тест API
-        async function runTest() {
+        // Очистка формы
+        function clearForm() {
+            document.getElementById('text').value = '';
+            updateCharCounter();
+            resetResultContainer();
+            resultContainer.classList.add('hidden');
+            showAlert('Форма очищена', 'info');
+        }
+        
+        // Показать отладочную информацию
+        async function showDebugInfo() {
             try {
-                const response = await fetch('/api/test');
+                const response = await fetch('/api/debug');
                 const data = await response.json();
                 
-                if (data.success) {
-                    showAlert(`✅ Тест пройден успешно!\nТип: ${data.result_type}\nАудио: ${data.audio_shape}`, 'success');
+                const debugInfo = `
+                    <strong>PyTorch:</strong> ${data.torch_version}<br>
+                    <strong>TorchAudio:</strong> ${data.torchaudio_version}<br>
+                    <strong>Активных потоков:</strong> ${data.active_threads}<br>
+                    <strong>Потоков TTS:</strong> ${data.active_tts_threads}<br>
+                    <strong>Моделей загружено:</strong> ${data.models_loaded ? data.models_loaded.length : 0}<br>
+                    <strong>Временных файлов:</strong> ${data.temp_files_count}<br>
+                    <strong>Макс. потоков:</strong> ${data.max_concurrent_threads}
+                `;
+                
+                showAlert(`Отладочная информация: ${debugInfo}`, 'info', 5000);
+            } catch (error) {
+                showAlert(`Ошибка получения отладочной информации: ${error.message}`, 'error');
+            }
+        }
+        
+        // Предзагрузка модели
+        async function loadDefaultModel() {
+            try {
+                const language = document.getElementById('language').value;
+                const speaker = document.getElementById('speaker').value;
+                
+                showAlert(`Загрузка модели ${language}_${speaker}...`, 'info');
+                
+                const response = await fetch(`/api/load-model/${language}/${speaker}`, {
+                    method: 'POST'
+                });
+                
+                const data = await response.json();
+                
+                if (response.ok) {
+                    showAlert(`✅ Модель загружена: ${data.message}`, 'success');
+                    updateModelStatus();
+                    checkHealth();
                 } else {
-                    showAlert(`❌ Тест не пройден: ${data.error}`, 'error');
+                    throw new Error(data.error || 'Ошибка загрузки');
                 }
             } catch (error) {
-                showAlert(`❌ Ошибка теста: ${error.message}`, 'error');
+                showAlert(`❌ Ошибка загрузки модели: ${error.message}`, 'error');
             }
         }
         
-        // Очистка кэша результатов
-        async function clearResultsCache() {
-            try {
-                showAlert('Очистка кэша...', 'info');
-                
-                // Здесь можно добавить вызов API для очистки кэша если он будет реализован
-                // Пока просто перезагружаем страницу
-                setTimeout(() => {
-                    location.reload();
-                }, 1000);
-                
-            } catch (error) {
-                showAlert(`Ошибка очистки кэша: ${error.message}`, 'error');
-            }
-        }
-        
-        // Обновление информации каждые 30 секунд
-        setInterval(() => {
-            checkHealth();
-            checkQueueStatus();
-        }, 30000);
+        // Обновление статуса сервиса
+        setInterval(checkHealth, 10000);
     </script>
 </body>
 </html>
