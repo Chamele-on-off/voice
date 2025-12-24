@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-ZINDAKI TTS SERVICE - Простая многопоточная версия
+ZINDAKI TTS SERVICE - Многопоточная версия с исправлением глобальной переменной
 Каждая задача выполняется в отдельном потоке
 """
 
@@ -46,7 +46,7 @@ tts_models = {}
 startup_time = datetime.now()
 # Храним результаты задач: task_id -> {status, filename, thread, error}
 tasks = {}
-# Счетчик активных потоков
+# Счетчик активных потоков - ОБЪЯВЛЯЕМ ГЛОБАЛЬНОЙ ПЕРЕМЕННОЙ
 active_threads = 0
 MAX_CONCURRENT_THREADS = 10  # Максимум 10 одновременных задач
 
@@ -254,7 +254,7 @@ def execute_task_in_thread(task_id, text, language, speaker, sample_rate):
     """
     Выполняет задачу TTS в отдельном потоке
     """
-    global active_threads
+    global active_threads  # Объявляем глобальную переменную
     
     try:
         logger.info(f"\n🧵 Запуск потока для задачи {task_id}")
@@ -321,6 +321,8 @@ def tts_request():
     """
     Асинхронная генерация TTS в отдельном потоке
     """
+    global active_threads  # Объявляем глобальную переменную
+    
     try:
         # Получаем и валидируем данные
         data = request.get_json()
@@ -380,7 +382,6 @@ def tts_request():
         tasks[task_id]['status'] = 'processing'
         
         # Увеличиваем счетчик активных потоков
-        global active_threads
         active_threads += 1
         
         # Запускаем поток
@@ -597,6 +598,8 @@ def get_all_tasks():
 @app.route('/api/cancel/<task_id>', methods=['DELETE'])
 def cancel_task(task_id):
     """Отмена задачи (если она еще выполняется)"""
+    global active_threads  # Объявляем глобальную переменную
+    
     try:
         if task_id not in tasks:
             return jsonify({'error': 'Task not found'}), 404
@@ -622,7 +625,6 @@ def cancel_task(task_id):
         task_info['cancelled_at'] = datetime.now().isoformat()
         
         # Уменьшаем счетчик активных потоков
-        global active_threads
         if task_info['status'] == 'processing':
             active_threads -= 1
         
