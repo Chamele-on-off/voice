@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-ZINDAKI TTS SERVICE - Простая версия с потоками
+ZINDAKI TTS SERVICE - Упрощенная версия с потоками
 Каждый запрос запускает синхронную генерацию в отдельном потоке
 """
 
@@ -43,8 +43,8 @@ CORS(app, resources={r"/*": {"origins": "*"}})
 # ========== ГЛОБАЛЬНЫЕ ПЕРЕМЕННЫЕ ==========
 tts_models = {}
 startup_time = datetime.now()
-# Простое хранилище задач: task_id -> {status, filename, error}
-tasks = {}
+active_threads = {}
+max_concurrent_threads = 50  # Максимальное количество одновременных потоков
 
 # ========== КОРРЕКТНЫЕ ИМЕНА ДИКТОРОВ SILERO ==========
 SPEAKER_MAPPING = {
@@ -136,15 +136,15 @@ def load_tts_model(language='ru', user_speaker='baya'):
     return tts_models[model_key]
 
 # ========== ФУНКЦИЯ ГЕНЕРАЦИИ АУДИО ==========
-def generate_audio(text, language, speaker, sample_rate):
+def generate_audio(text, language, speaker, sample_rate, request_id):
     """
     Генерация аудио из текста
-    Возвращает имя сгенерированного файла
+    Возвращает путь к сгенерированному файлу
     """
     try:
         start_time = time.time()
         
-        logger.info(f"\n🎵 Начинаю генерацию аудио")
+        logger.info(f"\n🎵 [Request {request_id}] Начинаю генерацию аудио")
         logger.info(f"   Язык: {language}, Голос: {speaker}")
         logger.info(f"   Текст: '{text[:100]}{'...' if len(text) > 100 else ''}'")
         
@@ -205,41 +205,41 @@ def generate_audio(text, language, speaker, sample_rate):
         file_size = os.path.getsize(filepath)
         generation_time = time.time() - start_time
         
-        logger.info(f"✅ Аудио успешно сгенерировано за {generation_time:.2f} секунд")
+        logger.info(f"✅ [Request {request_id}] Аудио успешно сгенерировано за {generation_time:.2f} секунд")
         logger.info(f"   📁 Файл: {filename}")
         
-        return filename
+        return filepath
         
     except Exception as e:
-        logger.error(f"❌ Ошибка генерации аудио: {str(e)}")
+        logger.error(f"❌ [Request {request_id}] Ошибка генерации аудио: {str(e)}")
         raise
 
 # ========== ФУНКЦИЯ ВЫПОЛНЕНИЯ ЗАДАЧИ В ПОТОКЕ ==========
-def execute_task(task_id, text, language, speaker, sample_rate):
+def process_tts_request(text, language, speaker, sample_rate, request_id, callback):
     """
-    Выполняет задачу TTS в отдельном потоке
-    Простая синхронная генерация, но в потоке
+    Выполняет TTS запрос в отдельном потоке
     """
     try:
-        logger.info(f"\n🧵 Запуск задачи {task_id} в потоке")
+        logger.info(f"🧵 [Thread-{request_id}] Запуск обработки запроса")
         
-        # Просто вызываем синхронную генерацию
-        filename = generate_audio(text, language, speaker, sample_rate)
+        # Генерируем аудио
+        filepath = generate_audio(text, language, speaker, sample_rate, request_id)
         
-        # Обновляем статус задачи
-        tasks[task_id]['status'] = 'completed'
-        tasks[task_id]['filename'] = filename
-        tasks[task_id]['completed_at'] = datetime.now().isoformat()
-        
-        logger.info(f"✅ Задача {task_id} завершена")
+        # Вызываем колбэк с результатом
+        callback({
+            'success': True,
+            'filepath': filepath,
+            'request_id': request_id,
+            'filename': os.path.basename(filepath)
+        })
         
     except Exception as e:
-        logger.error(f"❌ Ошибка в задаче {task_id}: {str(e)}")
-        
-        # Обновляем статус задачи с ошибкой
-        tasks[task_id]['status'] = 'failed'
-        tasks[task_id]['error'] = str(e)
-        tasks[task_id]['failed_at'] = datetime.now().isoformat()
+        logger.error(f"❌ [Thread-{request_id}] Ошибка обработки: {str(e)}")
+        callback({
+            'success': False,
+            'error': str(e),
+            'request_id': request_id
+        })
 
 # ========== API МАРШРУТЫ ==========
 
@@ -252,25 +252,24 @@ def index():
         logger.warning(f"⚠️ Шаблон index.html не найден: {e}")
         return jsonify({
             'service': 'Zindaki TTS Service',
-            'version': '3.1',
+            'version': '4.0',
             'status': 'running',
-            'mode': 'threaded-sync',
+            'mode': 'threaded-sync-simple',
+            'description': 'Каждый запрос обрабатывается в отдельном потоке',
             'endpoints': {
                 '/': 'GET - главная страница',
-                '/api/tts': 'POST - генерация в потоке',
-                '/api/tts-sync': 'POST - синхронная генерация',
+                '/api/tts': 'POST - генерация TTS (синхронно в потоке)',
                 '/api/health': 'GET - проверка здоровья',
                 '/api/voices': 'GET - список голосов',
                 '/api/test': 'GET - тестовый запрос',
-                '/api/status/<task_id>': 'GET - статус задачи'
+                '/api/debug': 'GET - отладочная информация'
             }
         })
 
 @app.route('/api/tts', methods=['POST'])
 def tts_request():
     """
-    Генерация TTS в отдельном потоке
-    Просто запускаем синхронную функцию в потоке
+    Генерация TTS - синхронная обработка в отдельном потоке
     """
     try:
         # Получаем и валидируем данные
@@ -289,88 +288,71 @@ def tts_request():
                 'error': f'Text too long ({len(req.text)} chars). Max is 5000.'
             }), 400
         
-        # Генерируем уникальный ID задачи
-        task_id = str(uuid.uuid4())
+        # Проверяем количество активных потоков
+        active_count = len([t for t in threading.enumerate() 
+                          if t.name.startswith('TTS-')])
         
-        logger.info(f"\n📨 Получен запрос для обработки в потоке (ID: {task_id})")
+        if active_count >= max_concurrent_threads:
+            return jsonify({
+                'error': 'Service is busy',
+                'message': f'Too many concurrent requests ({active_count}/{max_concurrent_threads})',
+                'suggestion': 'Try again in a few seconds'
+            }), 429
+        
+        # Генерируем уникальный ID запроса
+        request_id = str(uuid.uuid4())[:8]
+        
+        logger.info(f"\n📨 Получен TTS запрос (ID: {request_id})")
         logger.info(f"   Текст: '{req.text[:50]}...'")
+        logger.info(f"   Активных потоков: {active_count}/{max_concurrent_threads}")
         
-        # Создаем запись о задаче
-        tasks[task_id] = {
-            'status': 'processing',
-            'text_preview': req.text[:50] + '...' if len(req.text) > 50 else req.text,
-            'language': req.language,
-            'speaker': req.speaker,
-            'created_at': datetime.now().isoformat(),
-            'filename': None,
-            'error': None
-        }
+        # Используем Event для ожидания завершения потока
+        done_event = threading.Event()
+        result = {'done': False}
         
-        # Запускаем задачу в отдельном потоке
+        def callback(response):
+            result.update(response)
+            result['done'] = True
+            done_event.set()
+        
+        # Запускаем обработку в отдельном потоке
         thread = threading.Thread(
-            target=execute_task,
-            args=(task_id, req.text, req.language, req.speaker, req.sample_rate),
-            name=f"TTS-{task_id[:8]}",
+            target=process_tts_request,
+            args=(req.text, req.language, req.speaker, req.sample_rate, request_id, callback),
+            name=f"TTS-{request_id}",
             daemon=True
         )
         
         thread.start()
         
-        logger.info(f"🧵 Задача {task_id} запущена в потоке")
+        # Ждем завершения потока (синхронное ожидание)
+        logger.info(f"⏳ Ожидание завершения генерации (ID: {request_id})...")
         
-        return jsonify({
-            'job_id': task_id,
-            'task_id': task_id,
-            'status': 'processing',
-            'message': 'Задача запущена в отдельном потоке',
-            'estimated_time': '5-30 секунд',
-            'check_status': f'/api/status/{task_id}',
-            'models_loaded': list(tts_models.keys()),
-            'timestamp': datetime.now().isoformat()
-        }), 202
-        
-    except ValidationError as e:
-        return jsonify({
-            'error': 'Invalid request data',
-            'details': e.errors()
-        }), 400
-        
-    except Exception as e:
-        logger.error(f"❌ Ошибка в tts_request: {str(e)}")
-        return jsonify({'error': str(e)}), 500
-
-@app.route('/api/tts-sync', methods=['POST'])
-def tts_sync_request():
-    """
-    Синхронная генерация TTS (сразу возвращает файл)
-    """
-    try:
-        # Получаем и валидируем данные
-        data = request.get_json()
-        if not data:
-            return jsonify({'error': 'No JSON data provided'}), 400
-        
-        req = TTSRequest(**data)
-        
-        # Проверка длины текста
-        if len(req.text) == 0:
-            return jsonify({'error': 'Text cannot be empty'}), 400
-        
-        if len(req.text) > 5000:
+        # Таймаут: 60 секунд на генерацию
+        if not done_event.wait(timeout=60):
+            logger.error(f"❌ [Request {request_id}] Таймаут генерации")
             return jsonify({
-                'error': f'Text too long ({len(req.text)} chars). Max is 5000.'
-            }), 400
+                'error': 'Generation timeout',
+                'request_id': request_id,
+                'message': 'Generation took too long'
+            }), 504
         
-        logger.info(f"\n⚡ Получен синхронный TTS запрос")
+        # Проверяем результат
+        if not result['success']:
+            logger.error(f"❌ [Request {request_id}] Ошибка в результате: {result.get('error')}")
+            return jsonify({
+                'error': result.get('error', 'Unknown error'),
+                'request_id': request_id
+            }), 500
         
-        # Генерируем аудио синхронно
-        filename = generate_audio(req.text, req.language, req.speaker, req.sample_rate)
-        filepath = os.path.join('/app/temp_audio', filename)
+        # Получаем путь к файлу
+        filepath = result['filepath']
+        filename = result['filename']
         
         if not os.path.exists(filepath):
             return jsonify({'error': 'File was not created'}), 500
         
-        logger.info(f"📤 Отправляю файл: {filename}")
+        logger.info(f"📤 [Request {request_id}] Отправляю файл: {filename}")
         
         # Отправляем файл
         response = send_file(
@@ -399,83 +381,8 @@ def tts_sync_request():
         }), 400
         
     except Exception as e:
-        logger.error(f"❌ Ошибка в tts_sync_request: {str(e)}")
+        logger.error(f"❌ Ошибка в tts_request: {str(e)}")
         return jsonify({'error': str(e)}), 500
-
-@app.route('/api/status/<task_id>', methods=['GET'])
-def get_task_status(task_id):
-    """Проверка статуса задачи"""
-    try:
-        if task_id not in tasks:
-            return jsonify({'error': 'Task not found'}), 404
-        
-        task_info = tasks[task_id]
-        status = task_info['status']
-        
-        if status == 'completed':
-            # Задача выполнена
-            filename = task_info['filename']
-            filepath = os.path.join('/app/temp_audio', filename)
-            
-            if not os.path.exists(filepath):
-                return jsonify({
-                    'error': 'Audio file not found',
-                    'status': 'completed',
-                    'filename': filename
-                }), 404
-            
-            logger.info(f"📤 Отправляю файл: {filepath}")
-            
-            # Отправляем файл
-            response = send_file(
-                filepath,
-                mimetype='audio/wav',
-                as_attachment=True,
-                download_name=filename
-            )
-            
-            # Очистка файла после отправки
-            @response.call_on_close
-            def cleanup():
-                try:
-                    if os.path.exists(filepath):
-                        os.remove(filepath)
-                        logger.info(f"🗑️ Удален временный файл: {filepath}")
-                    # Удаляем задачу из кэша
-                    if task_id in tasks:
-                        del tasks[task_id]
-                        logger.info(f"🗑️ Удалена задача {task_id} из кэша")
-                except Exception as e:
-                    logger.error(f"⚠️ Ошибка удаления файла: {e}")
-            
-            return response
-            
-        elif status == 'failed':
-            # Задача завершилась с ошибкой
-            return jsonify({
-                'status': 'failed',
-                'error': task_info.get('error', 'Unknown error'),
-                'failed_at': task_info.get('failed_at'),
-                'task_id': task_id
-            }), 500
-            
-        else:
-            # Задача выполняется
-            return jsonify({
-                'status': status,
-                'job_id': task_id,
-                'task_id': task_id,
-                'text_preview': task_info.get('text_preview', ''),
-                'language': task_info.get('language', 'ru'),
-                'speaker': task_info.get('speaker', 'baya'),
-                'created_at': task_info.get('created_at'),
-                'models_loaded': list(tts_models.keys()),
-                'timestamp': datetime.now().isoformat()
-            }), 200
-            
-    except Exception as e:
-        logger.error(f"❌ Ошибка получения статуса задачи {task_id}: {str(e)}")
-        return jsonify({'error': f'Task error: {str(e)}'}), 500
 
 @app.route('/api/health', methods=['GET'])
 def health_check():
@@ -488,19 +395,21 @@ def health_check():
             except Exception as e:
                 logger.warning(f"⚠️ Не удалось загрузить модель при health check: {e}")
         
+        # Считаем активные потоки TTS
+        tts_threads = [t for t in threading.enumerate() if t.name.startswith('TTS-')]
+        
         # Проверяем директорию временных файлов
         temp_files_count = len(os.listdir('/app/temp_audio')) if os.path.exists('/app/temp_audio') else 0
-        
-        # Считаем активные потоки
-        active_threads = threading.active_count() - 1  # минус основной поток
         
         return jsonify({
             'status': 'healthy',
             'service': 'zindaki-tts-service',
-            'version': '3.1',
-            'mode': 'threaded-sync',
-            'active_threads': active_threads,
-            'active_tasks': len([t for t in tasks.values() if t['status'] == 'processing']),
+            'version': '4.0',
+            'mode': 'threaded-sync-simple',
+            'description': 'Синхронная генерация в отдельных потоках',
+            'active_threads': threading.active_count(),
+            'active_tts_threads': len(tts_threads),
+            'max_concurrent_threads': max_concurrent_threads,
             'models_loaded': list(tts_models.keys()),
             'models_count': len(tts_models),
             'temp_files_count': temp_files_count,
@@ -652,7 +561,10 @@ def debug_info():
     
     # Получаем информацию о потоках
     thread_info = []
+    tts_threads = []
     for thread in threading.enumerate():
+        if thread.name.startswith('TTS-'):
+            tts_threads.append(thread.name)
         thread_info.append({
             'name': thread.name,
             'daemon': thread.daemon,
@@ -669,11 +581,10 @@ def debug_info():
         'temp_files_count': len(temp_files),
         'temp_files': temp_files[:10],
         'models_loaded': list(tts_models.keys()),
-        'active_tasks': len([t for t in tasks.values() if t['status'] == 'processing']),
-        'completed_tasks': len([t for t in tasks.values() if t['status'] == 'completed']),
-        'failed_tasks': len([t for t in tasks.values() if t['status'] == 'failed']),
         'active_threads': threading.active_count(),
-        'threads': thread_info[:5],
+        'active_tts_threads': len(tts_threads),
+        'tts_thread_names': tts_threads[:10],
+        'max_concurrent_threads': max_concurrent_threads,
         'timestamp': datetime.now().isoformat()
     })
 
@@ -729,33 +640,10 @@ def cleanup_temp_files():
             logger.error(f"⚠️ Ошибка очистки временных файлов: {e}")
 
 def periodic_cleanup():
-    """Периодическая очистка временных файлов и кэша задач"""
+    """Периодическая очистка временных файлов"""
     while True:
         time.sleep(3600)  # Каждый час
-        
-        # Очистка файлов
         cleanup_temp_files()
-        
-        # Очистка старых записей из кэша задач
-        current_time = datetime.now()
-        expired_tasks = []
-        
-        for task_id, task_info in list(tasks.items()):
-            created_time_str = task_info.get('created_at')
-            if created_time_str:
-                try:
-                    created_time = datetime.fromisoformat(created_time_str)
-                    # Удаляем задачи старше 24 часов
-                    if (current_time - created_time).total_seconds() > 86400:
-                        expired_tasks.append(task_id)
-                except:
-                    pass
-        
-        for task_id in expired_tasks:
-            del tasks[task_id]
-        
-        if expired_tasks:
-            logger.info(f"🗑️ Удалено {len(expired_tasks)} устаревших задач из кэша")
 
 # Регистрируем очистку при завершении
 atexit.register(cleanup_temp_files)
@@ -764,7 +652,7 @@ atexit.register(cleanup_temp_files)
 
 if __name__ == '__main__':
     print("\n" + "=" * 70)
-    print("🎵 ZINDAKI TTS SERVICE - Простая версия с потоками v3.1")
+    print("🎵 ZINDAKI TTS SERVICE - Упрощенная версия с потоками v4.0")
     print("=" * 70)
     print(f"📅 Дата запуска: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"🐍 Python версия: {sys.version.split()[0]}")
@@ -772,6 +660,7 @@ if __name__ == '__main__':
     print(f"🎵 TorchAudio версия: {torchaudio.__version__}")
     print(f"📁 Кэш директория: {os.environ.get('TORCH_HOME')}")
     print(f"📁 Директория временных файлов: /app/temp_audio")
+    print(f"🧵 Максимальное количество потоков: {max_concurrent_threads}")
     
     # Проверяем наличие директории templates
     templates_dir = '/app/templates'
@@ -808,9 +697,14 @@ if __name__ == '__main__':
     print(f"🌐 Доступен по адресу: http://0.0.0.0:5000")
     print(f"📚 API доступен по: http://0.0.0.0:5000/api/health")
     print("\n📋 Доступные эндпоинты:")
-    print("   POST /api/tts       - Генерация в потоке (просто синхронная в отдельном потоке)")
-    print("   POST /api/tts-sync  - Синхронная генерация (сразу файл)")
-    print("   GET  /api/status/*  - Статус задачи")
+    print("   POST /api/tts       - Генерация TTS (синхронно в потоке)")
+    print("   GET  /api/health    - Проверка здоровья сервиса")
+    print("   GET  /api/voices    - Список доступных голосов")
+    print("   GET  /api/test      - Тест работы сервиса")
+    print("=" * 70)
+    print("\n📝 Режим работы: Каждый запрос обрабатывается синхронно")
+    print("   в отдельном потоке, что обеспечивает параллельную")
+    print("   обработку множества запросов.")
     print("=" * 70)
     
     app.run(
